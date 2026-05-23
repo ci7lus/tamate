@@ -72,7 +72,12 @@ export function WorkPage() {
 						return currentEpisodeId;
 					}
 
-					return null;
+					const mayNextEpisode = nextWork.episodes.find(
+						(episode) => !episode.viewerDidTrack,
+					);
+					return mayNextEpisode
+						? mayNextEpisode.id
+						: (nextWork.episodes?.[0]?.id ?? null);
 				});
 			})
 			.catch((error) => {
@@ -170,7 +175,7 @@ export function WorkPage() {
 
 	return (
 		<div className="flex flex-col gap-3">
-			<section className="group relative overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4 xl:flex xl:flex-row xl:gap-6">
+			<section className="group relative overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4 xl:flex xl:gap-6">
 				{work.imageUrl ? (
 					<div className="absolute inset-0 z-0">
 						<div className="absolute inset-0 bg-linear-to-r from-gray-900/90 via-gray-950/70 to-transparent z-10"></div>
@@ -291,7 +296,7 @@ export function WorkPage() {
 				</div>
 			</section>
 
-			<section className="grid gap-6 xl:grid-cols-[minmax(280px,1fr)_minmax(0,2fr)]">
+			<section className="grid gap-6 md:grid-cols-[minmax(280px,1fr)_minmax(0,2fr)]">
 				<article
 					className="relative flex flex-col gap-4 overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4"
 					style={{ minHeight: 420 }}

@@ -10,6 +10,7 @@ import { Link, useNavigate } from "react-router-dom";
 import type { AnnictSearchWork } from "../lib/annict";
 import { searchWorksByTitle } from "../lib/annict";
 import { getErrorMessage } from "../lib/errors";
+import { SEARCH_TERM_EVENT_NAME } from "../shared/search";
 import { useAnnictSession } from "./AnnictSessionProvider";
 
 function GlobalSearch() {
@@ -21,6 +22,7 @@ function GlobalSearch() {
 	const [isSearching, setIsSearching] = useState(false);
 	const [works, setWorks] = useState<AnnictSearchWork[]>([]);
 	const deferredTerm = useDeferredValue(term.trim());
+	const inputRef = useRef<HTMLInputElement | null>(null);
 	const searchRef = useRef<HTMLDivElement | null>(null);
 
 	useEffect(() => {
@@ -43,6 +45,26 @@ function GlobalSearch() {
 		return () => {
 			document.removeEventListener("mousedown", closeMenu);
 			document.removeEventListener("touchstart", closeMenu);
+		};
+	}, []);
+
+	useEffect(() => {
+		const syncSearchTerm = (event: Event) => {
+			const customEvent = event as CustomEvent<{ term?: string }>;
+			const nextTerm = customEvent.detail?.term?.trim() ?? "";
+			setTerm(nextTerm);
+			setErrorMessage(null);
+			setIsMenuVisible(true);
+
+			window.requestAnimationFrame(() => {
+				inputRef.current?.focus();
+			});
+		};
+
+		window.addEventListener(SEARCH_TERM_EVENT_NAME, syncSearchTerm);
+
+		return () => {
+			window.removeEventListener(SEARCH_TERM_EVENT_NAME, syncSearchTerm);
 		};
 	}, []);
 
@@ -130,6 +152,7 @@ function GlobalSearch() {
 					autoComplete="off"
 					className="block w-full rounded-xl border border-gray-700 bg-gray-950 px-4 py-3 text-gray-100 outline-none transition placeholder:text-gray-500 focus:border-[#FF8B46] disabled:cursor-not-allowed disabled:opacity-50"
 					disabled={isDisabled}
+					ref={inputRef}
 					onChange={(event) => setTerm(event.target.value)}
 					onClick={() => setIsMenuVisible(true)}
 					onFocus={() => setIsMenuVisible(true)}

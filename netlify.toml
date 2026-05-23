@@ -7,6 +7,16 @@
 	node_bundler = "esbuild"
 
 [[redirects]]
+from = "/cal/db.php"
+to = "https://cal.syoboi.jp/db.php"
+status = 200
+
+[[redirects]]
+from = "/cal/json.php"
+to = "https://cal.syoboi.jp/json.php"
+status = 200
+
+[[redirects]]
 	from = "/*"
 	to = "/index.html"
 	status = 200

@@ -1,7 +1,7 @@
 import { Interweave } from "interweave";
 import { Url, UrlMatcher } from "interweave-autolink";
 import { startTransition, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import {
 	type AnnictWatchingWork,
@@ -21,6 +21,7 @@ import { requestSearchTerm } from "../shared/search";
 import { useAnnictSession } from "./AnnictSessionProvider";
 
 const HOUR_HEIGHT = 112;
+const MIN_EMPTY_HOUR_HEIGHT = 24;
 const TIME_RAIL_WIDTH = 72;
 
 type TimedScheduleItem = {
@@ -80,55 +81,57 @@ const DEFAULT_VISIBLE_CHANNEL_GROUPS = [
 const FILTER_STORAGE_KEY = "tamate:schedule-filters:v1";
 const RECENT_FIRST_BROADCAST_MONTHS = 12;
 
+type StoredFilters = {
+	categories: number[];
+	channelGroups: string[];
+	mayRebroadcastHidden: boolean;
+};
+
 const normalizeAnnictTitle = (value: string) =>
 	value
 		.normalize("NFKC")
 		.toLowerCase()
 		.replace(/[\p{P}\p{S}\sー－〜]/gu, "");
 
+const buildDefaultFilters = (): StoredFilters => ({
+	categories: DEFAULT_SELECTED_CATEGORIES,
+	channelGroups: [...DEFAULT_VISIBLE_CHANNEL_GROUPS],
+	mayRebroadcastHidden: true,
+});
+
+const hasSameOrderedValues = <TValue,>(left: TValue[], right: TValue[]) =>
+	left.length === right.length &&
+	left.every((value, index) => value === right[index]);
+
 const readStoredFilters = () => {
 	if (typeof window === "undefined") {
-		return {
-			categories: DEFAULT_SELECTED_CATEGORIES,
-			channelGroups: [...DEFAULT_VISIBLE_CHANNEL_GROUPS],
-			mayRebroadcastHidden: true,
-		};
+		return buildDefaultFilters();
 	}
 
 	try {
 		const rawValue = window.localStorage.getItem(FILTER_STORAGE_KEY);
 		if (!rawValue) {
-			return {
-				categories: DEFAULT_SELECTED_CATEGORIES,
-				channelGroups: [...DEFAULT_VISIBLE_CHANNEL_GROUPS],
-				mayRebroadcastHidden: true,
-			};
+			return buildDefaultFilters();
 		}
 
-		const parsedValue = JSON.parse(rawValue) as {
-			categories?: number[];
-			channelGroups?: string[];
-			mayRebroadcastHidden?: boolean;
-		};
+		const parsedValue = JSON.parse(rawValue) as Partial<StoredFilters>;
+		const defaultFilters = buildDefaultFilters();
 
 		return {
 			categories:
 				parsedValue.categories?.filter((value) => typeof value === "number") ??
-				DEFAULT_SELECTED_CATEGORIES,
-			channelGroups: parsedValue.channelGroups?.filter(
-				(value) => typeof value === "string",
-			) ?? [...DEFAULT_VISIBLE_CHANNEL_GROUPS],
+				defaultFilters.categories,
+			channelGroups:
+				parsedValue.channelGroups?.filter(
+					(value) => typeof value === "string",
+				) ?? defaultFilters.channelGroups,
 			mayRebroadcastHidden:
 				typeof parsedValue.mayRebroadcastHidden === "boolean"
 					? parsedValue.mayRebroadcastHidden
-					: true,
+					: defaultFilters.mayRebroadcastHidden,
 		};
 	} catch {
-		return {
-			categories: DEFAULT_SELECTED_CATEGORIES,
-			channelGroups: [...DEFAULT_VISIBLE_CHANNEL_GROUPS],
-			mayRebroadcastHidden: true,
-		};
+		return buildDefaultFilters();
 	}
 };
 
@@ -216,7 +219,6 @@ const mergeSimulcastItems = (items: SyobocalScheduleItem[]) => {
 		const mergeKey = [
 			item.titleId,
 			item.count ?? "",
-			item.subtitle ?? "",
 			item.startAt,
 			item.endAt,
 		].join("\u0000");
@@ -263,7 +265,11 @@ const mergeSimulcastItems = (items: SyobocalScheduleItem[]) => {
 		});
 };
 
-const buildTimelineLayout = (items: SyobocalScheduleItem[]) => {
+const buildTimelineLayout = (
+	items: SyobocalScheduleItem[],
+	rangeStartAt?: string,
+	rangeEndAt?: string,
+) => {
 	const timelineItems: TimedScheduleItem[] = items
 		.map((item) => ({
 			endAt: parseSyobocalDateTime(item.endAt),
@@ -271,6 +277,12 @@ const buildTimelineLayout = (items: SyobocalScheduleItem[]) => {
 			startAt: parseSyobocalDateTime(item.startAt),
 		}))
 		.sort((left, right) => left.startAt.getTime() - right.startAt.getTime());
+	const timelineStart = rangeStartAt
+		? parseSyobocalDateTime(rangeStartAt)
+		: timelineItems[0]?.startAt;
+	const timelineEnd = rangeEndAt
+		? parseSyobocalDateTime(rangeEndAt)
+		: timelineItems.at(-1)?.endAt;
 
 	const clusters: TimedScheduleItem[][] = [];
 	let currentCluster: TimedScheduleItem[] = [];
@@ -301,11 +313,26 @@ const buildTimelineLayout = (items: SyobocalScheduleItem[]) => {
 	const positionedItems: TimelineLayoutItem[] = [];
 	const positionedClusters: TimelineCluster[] = [];
 	let top = 0;
+	let previousBoundary = timelineStart ?? null;
+
+	if (timelineStart) {
+		markers.push({
+			label: formatClockFromDate(timelineStart),
+			tone: "start",
+			top: 0,
+		});
+	}
 
 	for (const cluster of clusters) {
 		const clusterStart = cluster[0]?.startAt;
 		if (!clusterStart) {
 			continue;
+		}
+
+		if (previousBoundary && clusterStart > previousBoundary) {
+			top +=
+				(diffMinutes(previousBoundary, clusterStart) / 60) *
+				MIN_EMPTY_HOUR_HEIGHT;
 		}
 
 		const clusterEnd = cluster.reduce(
@@ -314,11 +341,13 @@ const buildTimelineLayout = (items: SyobocalScheduleItem[]) => {
 			clusterStart,
 		);
 
-		markers.push({
-			label: formatClockFromDate(clusterStart),
-			tone: "start",
-			top,
-		});
+		if (!timelineStart || clusterStart.getTime() !== timelineStart.getTime()) {
+			markers.push({
+				label: formatClockFromDate(clusterStart),
+				tone: "start",
+				top,
+			});
+		}
 
 		const columnEnds: Date[] = [];
 		const assignments = cluster.map((timelineItem) => {
@@ -402,6 +431,12 @@ const buildTimelineLayout = (items: SyobocalScheduleItem[]) => {
 			top,
 		});
 		top += clusterHeight;
+		previousBoundary = clusterEnd;
+	}
+
+	if (previousBoundary && timelineEnd && timelineEnd > previousBoundary) {
+		top +=
+			(diffMinutes(previousBoundary, timelineEnd) / 60) * MIN_EMPTY_HOUR_HEIGHT;
 	}
 
 	return {
@@ -426,17 +461,19 @@ function ScheduleSkeleton() {
 }
 
 function ScheduleCard({
+	annictId,
 	isWatching,
 	item,
 	onOpenSearch,
-	onOpenWork,
 	position,
+	isLoggedIn,
 }: {
+	annictId: number | null;
 	isWatching: AnnictWatchingWork | null;
 	item: SyobocalScheduleItem;
 	onOpenSearch: (term: string) => Promise<void> | void;
-	onOpenWork: (work: AnnictWatchingWork) => void;
 	position: TimelineLayoutItem;
+	isLoggedIn: boolean;
 }) {
 	const left = `${(position.columnIndex / position.columnCount) * 100}%`;
 	const baseSurfaceStyle = getCategorySurfaceStyle(item.category);
@@ -447,16 +484,8 @@ function ScheduleCard({
 			: baseSurfaceStyle;
 
 	return (
-		<button
+		<div
 			className="absolute z-0 overflow-hidden rounded-2xl border p-2 text-left shadow-[0_12px_28px_rgba(15,23,42,0.16)] transition hover:z-20 hover:-translate-y-0.5 hover:shadow-[0_16px_30px_rgba(15,23,42,0.22)]"
-			onClick={() => {
-				if (isWatching) {
-					onOpenWork(isWatching);
-					return;
-				}
-
-				void onOpenSearch(item.shortTitle ?? item.title);
-			}}
 			style={{
 				height: position.height,
 				left,
@@ -464,7 +493,6 @@ function ScheduleCard({
 				width: `${100 / position.columnCount}%`,
 				...surfaceStyle,
 			}}
-			type="button"
 		>
 			<div className="flex items-start justify-between gap-2 text-[11px] font-semibold text-gray-700">
 				<span>{formatClock(item.startAt)}</span>
@@ -475,17 +503,42 @@ function ScheduleCard({
 				) : null}
 			</div>
 			<div className="mt-1 overflow-hidden text-[16px] font-semibold leading-[1.15] text-gray-950">
-				{item.shortTitle ?? item.title}
+				{item.shortTitle ?? item.title}{" "}
+				<span className="text-gray-400 mt-1 text-sm font-normal">
+					{annictId ? (
+						<Link className="text-sky-600" to={`/works/${annictId}`}>
+							記録
+						</Link>
+					) : (
+						<button
+							disabled={!isLoggedIn}
+							className={`text-sky-600 ${isLoggedIn ? "cursor-pointer" : "cursor-not-allowed opacity-50"}`}
+							onClick={() => {
+								if (!isLoggedIn) {
+									return;
+								}
+								void onOpenSearch(item.shortTitle ?? item.title);
+							}}
+							type="button"
+						>
+							検索
+						</button>
+					)}
+					{" / "}
+					<a
+						className="text-sky-600"
+						href={`https://cal.syoboi.jp/tid/${item.titleId}#${item.programId}`}
+						target="_blank"
+						rel="noopener"
+					>
+						cal
+					</a>
+				</span>
 			</div>
 			<div className="mt-1 overflow-hidden text-[13px] leading-tight text-sky-700">
 				{item.channelName}
 			</div>
-			{/** biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation */}
-			{/** biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation */}
-			<div
-				className="mt-1 overflow-hidden text-[12px] leading-tight text-gray-600"
-				onClick={(e) => e.stopPropagation()}
-			>
+			<div className="mt-1 overflow-hidden text-[12px] leading-tight text-gray-600">
 				<Interweave
 					content={buildProgramSummary(item)}
 					matchers={[
@@ -495,7 +548,7 @@ function ScheduleCard({
 					]}
 				/>
 			</div>
-		</button>
+		</div>
 	);
 }
 
@@ -642,15 +695,20 @@ export function SyobocalCalendar() {
 			);
 
 			if (normalizedCurrent.length > 0) {
-				return normalizedCurrent;
+				return hasSameOrderedValues(normalizedCurrent, current)
+					? current
+					: normalizedCurrent;
 			}
 
 			const defaultLabels = DEFAULT_VISIBLE_CHANNEL_GROUPS.filter((label) =>
 				availableLabels.has(label),
 			);
-			return defaultLabels.length > 0
-				? [...defaultLabels]
-				: availableChannelGroups.map((group) => group.label);
+			const nextLabels =
+				defaultLabels.length > 0
+					? [...defaultLabels]
+					: availableChannelGroups.map((group) => group.label);
+
+			return hasSameOrderedValues(nextLabels, current) ? current : nextLabels;
 		});
 	}, [availableChannelGroups, schedule]);
 
@@ -699,7 +757,11 @@ export function SyobocalCalendar() {
 		);
 	})();
 
-	const timelineLayout = buildTimelineLayout(visibleItems);
+	const timelineLayout = buildTimelineLayout(
+		visibleItems,
+		schedule?.rangeStartAt,
+		schedule?.rangeEndAt,
+	);
 	const isCurrentBusinessDate = businessDate === getInitialSyobocalDate();
 	const matchedPrograms = [
 		...new Map(
@@ -784,19 +846,42 @@ export function SyobocalCalendar() {
 
 	const nowTop = isCurrentBusinessDate
 		? (() => {
-				const now = new Date();
-				for (const cluster of timelineLayout.clusters) {
-					if (now < cluster.startAt || now > cluster.endAt) {
-						continue;
-					}
-
-					return (
-						cluster.top +
-						(diffMinutes(cluster.startAt, now) / 60) * cluster.pixelsPerHour
-					);
+				if (!schedule) {
+					return null;
 				}
 
-				return null;
+				const now = new Date();
+				const rangeStart = parseSyobocalDateTime(schedule.rangeStartAt);
+				const rangeEnd = parseSyobocalDateTime(schedule.rangeEndAt);
+				if (now < rangeStart || now > rangeEnd) {
+					return null;
+				}
+
+				let currentTop = 0;
+				let previousBoundary = rangeStart;
+				for (const cluster of timelineLayout.clusters) {
+					if (now < cluster.startAt) {
+						return (
+							currentTop +
+							(diffMinutes(previousBoundary, now) / 60) * MIN_EMPTY_HOUR_HEIGHT
+						);
+					}
+
+					if (now <= cluster.endAt) {
+						return (
+							cluster.top +
+							(diffMinutes(cluster.startAt, now) / 60) * cluster.pixelsPerHour
+						);
+					}
+
+					currentTop = cluster.top + cluster.height;
+					previousBoundary = cluster.endAt;
+				}
+
+				return (
+					currentTop +
+					(diffMinutes(previousBoundary, now) / 60) * MIN_EMPTY_HOUR_HEIGHT
+				);
 			})()
 		: null;
 
@@ -1035,19 +1120,23 @@ export function SyobocalCalendar() {
 											/>
 										) : null}
 
-										{timelineLayout.positionedItems.map((positionedItem) => (
-											<ScheduleCard
-												isWatching={
-													watchingWorksByTid.get(positionedItem.item.titleId) ??
-													null
-												}
-												item={positionedItem.item}
-												key={positionedItem.item.programId}
-												onOpenSearch={openSearch}
-												onOpenWork={openWatchingWork}
-												position={positionedItem}
-											/>
-										))}
+										{timelineLayout.positionedItems.map((positionedItem) => {
+											const linkedWork =
+												watchingWorksByTid.get(positionedItem.item.titleId) ??
+												null;
+
+											return (
+												<ScheduleCard
+													annictId={linkedWork?.annictId ?? null}
+													isWatching={linkedWork}
+													item={positionedItem.item}
+													key={positionedItem.item.programId}
+													onOpenSearch={openSearch}
+													position={positionedItem}
+													isLoggedIn={!!accessToken}
+												/>
+											);
+										})}
 									</div>
 								</div>
 							</div>
@@ -1058,7 +1147,7 @@ export function SyobocalCalendar() {
 						<a
 							className="text-blue-400"
 							href="https://cal.syoboi.jp/"
-							rel="noopener noreferrer"
+							rel="noopener"
 							target="_blank"
 						>
 							しょぼいカレンダー (cal.syoboi.jp)

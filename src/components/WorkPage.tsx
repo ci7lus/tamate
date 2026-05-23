@@ -20,7 +20,7 @@ export function WorkPage() {
 	const parsedAnnictId = Number(annictId);
 	const { accessToken, login } = useAnnictSession();
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
-	const [isLoading, setIsLoading] = useState(false);
+	const [isLoading, setIsLoading] = useState(true);
 	const [isRecording, setIsRecording] = useState(false);
 	const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 	const [reloadKey, setReloadKey] = useState(0);
@@ -47,7 +47,6 @@ export function WorkPage() {
 		}
 
 		let isActive = true;
-		setIsLoading(true);
 		setErrorMessage(null);
 
 		fetchWorkByAnnictId(accessToken, parsedAnnictId)
@@ -355,7 +354,6 @@ export function WorkPage() {
 										});
 										setComment("");
 										setRating(null);
-										setSelectedEpisodeId(null);
 										setReloadKey((current) => current + 1);
 									} catch (error) {
 										setErrorMessage(getErrorMessage(error));
@@ -364,14 +362,21 @@ export function WorkPage() {
 									}
 								}}
 							>
-								<div className="flex flex-col gap-3">
+								<a
+									href={`https://annict.com/works/${work.annictId}/episodes/${selectedEpisode.annictId}`}
+									rel="noreferrer"
+									target="_blank"
+								>
 									<h2 className="m-0 text-2xl font-semibold text-gray-50">
 										{selectedEpisode.numberText ??
 											selectedEpisode.number ??
 											"話数不明"}{" "}
 										{selectedEpisode.title}
 									</h2>
-								</div>
+								</a>
+								<p className="text-sm text-gray-400">
+									視聴回数: {selectedEpisode.viewerRecordsCount}回
+								</p>
 								<div className="flex flex-wrap">
 									{RATING_OPTIONS.map((option, index) => (
 										<button

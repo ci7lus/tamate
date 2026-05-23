@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+* {
+	line-height: 2;
+	word-break: auto-phrase;
+}

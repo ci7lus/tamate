@@ -155,6 +155,7 @@ export const buildAnnictAuthorizationUrl = () => {
 		"redirect_uri",
 		`${window.location.origin}/.netlify/functions/annict-callback`,
 	);
+	url.searchParams.set("scope", "read write");
 	return url.toString();
 };
 

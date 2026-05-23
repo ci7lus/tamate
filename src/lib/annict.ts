@@ -51,6 +51,13 @@ export type AnnictSearchWork = {
 	title: string;
 };
 
+export type AnnictWatchingWork = {
+	annictId: number;
+	syobocalTid: number | null;
+	title: string;
+	titleKana: string | null;
+};
+
 export type AnnictEpisode = {
 	annictId: number;
 	id: string;
@@ -86,6 +93,7 @@ type GraphQLResponse<TData> = {
 type Nullable<TValue> = TValue | null | undefined;
 
 const ANNICT_GRAPHQL_ENDPOINT = "https://api.annict.com/graphql";
+const ANNICT_REST_ENDPOINT = "https://api.annict.com";
 
 export class AnnictApiError extends Error {
 	readonly status?: number;
@@ -140,6 +148,47 @@ const requestAnnictGraphQL = async <TData>(
 	}
 
 	return payload.data;
+};
+
+const requestAnnictRest = async <TData>(
+	accessToken: string,
+	path: string,
+	params: URLSearchParams,
+) => {
+	const url = new URL(path, ANNICT_REST_ENDPOINT);
+	url.search = params.toString();
+
+	const response = await fetch(url, {
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+		},
+	});
+
+	if (!response.ok) {
+		let message = `Annict API request failed with status ${response.status}.`;
+
+		try {
+			const payload = (await response.json()) as {
+				errors?: Array<{
+					developer_message?: string;
+					message?: string;
+				}>;
+			};
+			const errorMessage = payload.errors
+				?.map((error) => error.developer_message ?? error.message)
+				.filter(Boolean)
+				.join("\n");
+			if (errorMessage) {
+				message = errorMessage;
+			}
+		} catch {
+			// Ignore JSON parse failures and fall back to the status-based message.
+		}
+
+		throw new AnnictApiError(message, response.status);
+	}
+
+	return (await response.json()) as TData;
 };
 
 export const buildAnnictAuthorizationUrl = () => {
@@ -330,6 +379,54 @@ export const fetchWorkByAnnictId = async (
 		twitterUsername: work.twitterUsername ?? null,
 		viewerStatusState: work.viewerStatusState ?? "NO_STATE",
 	} satisfies AnnictWork;
+};
+
+export const fetchWatchingWorks = async (accessToken: string) => {
+	const works: AnnictWatchingWork[] = [];
+	let nextPage: number | null = 1;
+
+	while (nextPage) {
+		const params = new URLSearchParams([
+			["fields", "id,title,title_kana,syobocal_tid"],
+			["filter_status", "watching"],
+			["page", String(nextPage)],
+			["per_page", "50"],
+		]);
+		const payload: {
+			next_page: number | null;
+			works: Array<{
+				id: number;
+				syobocal_tid: number | string | null;
+				title: string;
+				title_kana: string | null;
+			}>;
+		} = await requestAnnictRest(accessToken, "/v1/me/works", params);
+
+		works.push(
+			...payload.works.map(
+				(work: {
+					id: number;
+					syobocal_tid: number | string | null;
+					title: string;
+					title_kana: string | null;
+				}) => ({
+					annictId: work.id,
+					syobocalTid:
+						typeof work.syobocal_tid === "number"
+							? work.syobocal_tid
+							: work.syobocal_tid
+								? Number.parseInt(work.syobocal_tid, 10)
+								: null,
+					title: work.title,
+					titleKana: work.title_kana,
+				}),
+			),
+		);
+
+		nextPage = payload.next_page;
+	}
+
+	return works;
 };
 
 export const updateAnnictWorkStatus = async (

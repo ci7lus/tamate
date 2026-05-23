@@ -190,7 +190,7 @@ export function WorkPage() {
 						{work.title}
 					</h1>
 					{work.titleKana ? (
-						<p className="text-sm text-gray-400">{work.titleKana}</p>
+						<p className="text-sm text-gray-400 mt-1">{work.titleKana}</p>
 					) : null}
 					<div className="flex flex-wrap gap-3 mt-2">
 						<span className="inline-flex items-center rounded-full border border-gray-700 bg-gray-800 px-3 py-1 text-xs text-gray-300">
@@ -207,7 +207,7 @@ export function WorkPage() {
 						<a
 							className="text-sky-300 underline underline-offset-4 transition hover:text-sky-200"
 							href={`https://annict.com/works/${work.annictId}`}
-							rel="noreferrer"
+							rel="noopener"
 							target="_blank"
 						>
 							Annictで開く
@@ -233,18 +233,6 @@ export function WorkPage() {
 							</a>
 						) : null}
 					</div>
-					{work.seriesList.length > 0 ? (
-						<div className="flex flex-wrap gap-3">
-							{work.seriesList.map((seriesName) => (
-								<span
-									className="inline-flex items-center rounded-full border border-gray-700 bg-gray-800 px-3 py-1 text-xs text-gray-300"
-									key={seriesName}
-								>
-									{seriesName}
-								</span>
-							))}
-						</div>
-					) : null}
 					<label className="flex flex-col gap-3 mt-4">
 						<span className="text-sm font-medium text-gray-300">
 							視聴ステータス
@@ -364,7 +352,7 @@ export function WorkPage() {
 							>
 								<a
 									href={`https://annict.com/works/${work.annictId}/episodes/${selectedEpisode.annictId}`}
-									rel="noreferrer"
+									rel="noopener"
 									target="_blank"
 								>
 									<h2 className="m-0 text-2xl font-semibold text-gray-50">

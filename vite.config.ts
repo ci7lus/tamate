@@ -21,11 +21,6 @@ export default defineConfig({
 				display: "standalone",
 				icons: [
 					{
-						sizes: "192x192",
-						src: "/tamate-192.png",
-						type: "image/png",
-					},
-					{
 						sizes: "512x512",
 						src: "/tamate.png",
 						type: "image/png",

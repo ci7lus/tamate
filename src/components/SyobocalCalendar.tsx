@@ -52,6 +52,11 @@ type TimelineMarker = {
 	tone: "start";
 };
 
+type ProgramActionModalState = {
+	annictId: number | null;
+	item: SyobocalScheduleItem;
+};
+
 const CATEGORY_OPTIONS = [
 	{ label: "アニメ", value: 1 },
 	{ label: "アニメ(終了/再放送)", value: 10 },
@@ -461,19 +466,15 @@ function ScheduleSkeleton() {
 }
 
 function ScheduleCard({
-	annictId,
 	isWatching,
 	item,
-	onOpenSearch,
+	onOpenDetails,
 	position,
-	isLoggedIn,
 }: {
-	annictId: number | null;
 	isWatching: AnnictWatchingWork | null;
 	item: SyobocalScheduleItem;
-	onOpenSearch: (term: string) => Promise<void> | void;
+	onOpenDetails: () => void;
 	position: TimelineLayoutItem;
-	isLoggedIn: boolean;
 }) {
 	const left = `${(position.columnIndex / position.columnCount) * 100}%`;
 	const baseSurfaceStyle = getCategorySurfaceStyle(item.category);
@@ -484,8 +485,9 @@ function ScheduleCard({
 			: baseSurfaceStyle;
 
 	return (
-		<div
+		<button
 			className="absolute z-0 overflow-hidden rounded-2xl border p-2 text-left shadow-[0_12px_28px_rgba(15,23,42,0.16)] transition hover:z-20 hover:-translate-y-0.5 hover:shadow-[0_16px_30px_rgba(15,23,42,0.22)]"
+			onClick={onOpenDetails}
 			style={{
 				height: position.height,
 				left,
@@ -493,60 +495,115 @@ function ScheduleCard({
 				width: `${100 / position.columnCount}%`,
 				...surfaceStyle,
 			}}
+			type="button"
 		>
-			<div className="flex items-start justify-between gap-2 text-[11px] font-semibold text-gray-700">
+			<div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-gray-700">
 				<span>{formatClock(item.startAt)}</span>
 				{isWatching ? (
-					<span className="rounded-full bg-[#FF8B46] p-2 text-[10px] text-white">
+					<span className="rounded-full bg-[#FF8B46] p-2 text-[10px] text-white overflow-hidden text-ellipsis ellipsis whitespace-nowrap">
 						視聴中
 					</span>
 				) : null}
 			</div>
 			<div className="mt-1 overflow-hidden text-[16px] font-semibold leading-[1.15] text-gray-950">
-				{item.shortTitle ?? item.title}{" "}
-				<span className="text-gray-400 mt-1 text-sm font-normal">
+				{item.shortTitle ?? item.title}
+			</div>
+			<div className="mt-1 overflow-hidden text-[13px] leading-tight text-sky-700">
+				{item.channelName}
+			</div>
+			<div className="mt-1 overflow-hidden text-[12px] leading-tight text-gray-600">
+				{buildProgramSummary(item)}
+			</div>
+		</button>
+	);
+}
+
+function ProgramActionModal({
+	annictId,
+	isLoggedIn,
+	item,
+	onClose,
+	onOpenSearch,
+}: {
+	annictId: number | null;
+	isLoggedIn: boolean;
+	item: SyobocalScheduleItem;
+	onClose: () => void;
+	onOpenSearch: (term: string) => Promise<void> | void;
+}) {
+	return (
+		<div className="fixed inset-0 z-50 grid place-items-end p-3 md:place-items-center">
+			<button
+				aria-label="モーダルを閉じる"
+				className="absolute inset-0 bg-gray-950/75"
+				onClick={onClose}
+				type="button"
+			/>
+			<div className="relative z-10 w-full max-w-lg rounded-3xl border border-gray-700 bg-gray-900 p-4 text-gray-100 shadow-2xl">
+				<div className="flex items-start justify-between gap-3">
+					<div>
+						<p className="text-lg font-semibold leading-tight">
+							{item.shortTitle ?? item.title}
+						</p>
+						<p className="mt-1 text-sm text-gray-400">
+							{formatClock(item.startAt)} - {formatClock(item.endAt)} /{" "}
+							{item.channelName}
+						</p>
+					</div>
+					<button
+						className="inline-flex min-h-10 items-center justify-center rounded-full border border-gray-700 bg-gray-800 px-3 text-sm text-gray-200 transition hover:bg-gray-700"
+						onClick={onClose}
+						type="button"
+					>
+						閉じる
+					</button>
+				</div>
+
+				<div className="mt-3 rounded-2xl border border-gray-800 bg-gray-950/60 p-3 text-sm text-gray-300 whitespace-pre-line">
+					<Interweave
+						content={buildProgramSummary(item)}
+						matchers={[
+							new UrlMatcher("url", {}, (args) => (
+								<Url {...args} newWindow={true} />
+							)),
+						]}
+					/>
+				</div>
+
+				<div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
 					{annictId ? (
-						<Link className="text-sky-600" to={`/works/${annictId}`}>
+						<Link
+							className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#FF8B46] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#f07732]"
+							onClick={onClose}
+							to={`/works/${annictId}`}
+						>
 							記録
 						</Link>
 					) : (
 						<button
+							className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#FF8B46] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#f07732] disabled:cursor-not-allowed disabled:opacity-50"
 							disabled={!isLoggedIn}
-							className={`text-sky-600 ${isLoggedIn ? "cursor-pointer" : "cursor-not-allowed opacity-50"}`}
 							onClick={() => {
 								if (!isLoggedIn) {
 									return;
 								}
 								void onOpenSearch(item.shortTitle ?? item.title);
+								onClose();
 							}}
 							type="button"
 						>
 							検索
 						</button>
 					)}
-					{" / "}
 					<a
-						className="text-sky-600"
+						className="inline-flex min-h-11 items-center justify-center rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-400"
 						href={`https://cal.syoboi.jp/tid/${item.titleId}#${item.programId}`}
-						target="_blank"
 						rel="noopener"
+						target="_blank"
 					>
-						cal
+						しょぼかる
 					</a>
-				</span>
-			</div>
-			<div className="mt-1 overflow-hidden text-[13px] leading-tight text-sky-700">
-				{item.channelName}
-			</div>
-			<div className="mt-1 overflow-hidden text-[12px] leading-tight text-gray-600">
-				<Interweave
-					content={buildProgramSummary(item)}
-					matchers={[
-						new UrlMatcher("url", {}, (args) => (
-							<Url {...args} newWindow={true} />
-						)),
-					]}
-				/>
+				</div>
 			</div>
 		</div>
 	);
@@ -576,6 +633,9 @@ export function SyobocalCalendar() {
 	const [scheduleError, setScheduleError] = useState<string | null>(null);
 	const [watchingError, setWatchingError] = useState<string | null>(null);
 	const [watchingWorks, setWatchingWorks] = useState<AnnictWatchingWork[]>([]);
+	const [activeProgramModal, setActiveProgramModal] =
+		useState<ProgramActionModalState | null>(null);
+	const [nowTick, setNowTick] = useState(() => Date.now());
 
 	useEffect(() => {
 		void reloadKey;
@@ -763,6 +823,39 @@ export function SyobocalCalendar() {
 		schedule?.rangeEndAt,
 	);
 	const isCurrentBusinessDate = businessDate === getInitialSyobocalDate();
+
+	useEffect(() => {
+		if (!isCurrentBusinessDate) {
+			return;
+		}
+
+		setNowTick(Date.now());
+		const timerId = window.setInterval(() => {
+			setNowTick(Date.now());
+		}, 60_000);
+
+		return () => {
+			window.clearInterval(timerId);
+		};
+	}, [isCurrentBusinessDate]);
+
+	useEffect(() => {
+		if (!activeProgramModal) {
+			return;
+		}
+
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				setActiveProgramModal(null);
+			}
+		};
+
+		window.addEventListener("keydown", onKeyDown);
+		return () => {
+			window.removeEventListener("keydown", onKeyDown);
+		};
+	}, [activeProgramModal]);
+
 	const matchedPrograms = [
 		...new Map(
 			visibleItems
@@ -850,7 +943,7 @@ export function SyobocalCalendar() {
 					return null;
 				}
 
-				const now = new Date();
+				const now = new Date(nowTick);
 				const rangeStart = parseSyobocalDateTime(schedule.rangeStartAt);
 				const rangeEnd = parseSyobocalDateTime(schedule.rangeEndAt);
 				if (now < rangeStart || now > rangeEnd) {
@@ -1127,13 +1220,16 @@ export function SyobocalCalendar() {
 
 											return (
 												<ScheduleCard
-													annictId={linkedWork?.annictId ?? null}
 													isWatching={linkedWork}
 													item={positionedItem.item}
 													key={positionedItem.item.programId}
-													onOpenSearch={openSearch}
+													onOpenDetails={() =>
+														setActiveProgramModal({
+															annictId: linkedWork?.annictId ?? null,
+															item: positionedItem.item,
+														})
+													}
 													position={positionedItem}
-													isLoggedIn={!!accessToken}
 												/>
 											);
 										})}
@@ -1220,6 +1316,16 @@ export function SyobocalCalendar() {
 					</section>
 				</div>
 			</aside>
+
+			{activeProgramModal ? (
+				<ProgramActionModal
+					annictId={activeProgramModal.annictId}
+					isLoggedIn={!!accessToken}
+					item={activeProgramModal.item}
+					onClose={() => setActiveProgramModal(null)}
+					onOpenSearch={openSearch}
+				/>
+			) : null}
 		</div>
 	);
 }

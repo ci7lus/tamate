@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import useSWR from "swr";
 
 import {
 	type AnnictRatingState,
 	type AnnictStatusState,
-	type AnnictWork,
 	createAnnictRecord,
 	fetchWorkByAnnictId,
 	RATING_OPTIONS,
@@ -20,10 +20,8 @@ export function WorkPage() {
 	const parsedAnnictId = Number(annictId);
 	const { accessToken, login } = useAnnictSession();
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
-	const [isLoading, setIsLoading] = useState(true);
 	const [isRecording, setIsRecording] = useState(false);
 	const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-	const [reloadKey, setReloadKey] = useState(0);
 	const [selectedEpisodeId, setSelectedEpisodeId] = useState<string | null>(
 		null,
 	);
@@ -31,74 +29,46 @@ export function WorkPage() {
 	const [rating, setRating] = useState<AnnictRatingState | null>(null);
 	const [shareFacebook, setShareFacebook] = useState(false);
 	const [watchStatus, setWatchStatus] = useState<AnnictStatusState>("NO_STATE");
-	const [work, setWork] = useState<AnnictWork | null>(null);
+
+	const workKey =
+		accessToken && Number.isInteger(parsedAnnictId) && parsedAnnictId > 0
+			? ["annict-work", accessToken, parsedAnnictId]
+			: null;
+
+	const {
+		data: work,
+		error: workErrorRaw,
+		isLoading,
+		mutate: mutateWork,
+	} = useSWR(workKey, ([, token, id]) =>
+		fetchWorkByAnnictId(token as string, id as number),
+	);
+
+	const workError = workErrorRaw ? getErrorMessage(workErrorRaw) : null;
 
 	useEffect(() => {
-		void reloadKey;
-
-		if (
-			!accessToken ||
-			!Number.isInteger(parsedAnnictId) ||
-			parsedAnnictId <= 0
-		) {
-			setWork(null);
-			setIsLoading(false);
+		if (!work) {
 			return;
 		}
 
-		let isActive = true;
 		setErrorMessage(null);
+		setWatchStatus(work.viewerStatusState);
+		setSelectedEpisodeId((currentEpisodeId) => {
+			if (
+				currentEpisodeId &&
+				work.episodes.some((episode) => episode.id === currentEpisodeId)
+			) {
+				return currentEpisodeId;
+			}
 
-		fetchWorkByAnnictId(accessToken, parsedAnnictId)
-			.then((nextWork) => {
-				if (!isActive) {
-					return;
-				}
-
-				if (!nextWork) {
-					setWork(null);
-					setErrorMessage("対象の作品が見つかりませんでした。");
-					return;
-				}
-
-				setWork(nextWork);
-				setWatchStatus(nextWork.viewerStatusState);
-				setSelectedEpisodeId((currentEpisodeId) => {
-					if (
-						currentEpisodeId &&
-						nextWork.episodes.some((episode) => episode.id === currentEpisodeId)
-					) {
-						return currentEpisodeId;
-					}
-
-					const mayNextEpisode = nextWork.episodes.find(
-						(episode) => !episode.viewerDidTrack,
-					);
-					return mayNextEpisode
-						? mayNextEpisode.id
-						: (nextWork.episodes?.[0]?.id ?? null);
-				});
-			})
-			.catch((error) => {
-				if (!isActive) {
-					return;
-				}
-
-				setWork(null);
-				setErrorMessage(getErrorMessage(error));
-			})
-			.finally(() => {
-				if (!isActive) {
-					return;
-				}
-
-				setIsLoading(false);
-			});
-
-		return () => {
-			isActive = false;
-		};
-	}, [accessToken, parsedAnnictId, reloadKey]);
+			const mayNextEpisode = work.episodes.find(
+				(episode) => !episode.viewerDidTrack,
+			);
+			return mayNextEpisode
+				? mayNextEpisode.id
+				: (work.episodes?.[0]?.id ?? null);
+		});
+	}, [work]);
 
 	useEffect(() => {
 		void selectedEpisodeId;
@@ -159,7 +129,13 @@ export function WorkPage() {
 					<h1 className="m-0 text-4xl font-semibold leading-tight text-gray-50 max-[1279px]:max-w-none">
 						作品を表示できませんでした
 					</h1>
-					<p>{errorMessage ?? "Annictから作品情報を取得できませんでした。"}</p>
+					<p>
+						{work === null
+							? "対象の作品が見つかりませんでした。"
+							: (workError ??
+								errorMessage ??
+								"Annictから作品情報を取得できませんでした。")}
+					</p>
 				</section>
 			</div>
 		);
@@ -256,10 +232,15 @@ export function WorkPage() {
 										work.id,
 										nextStatus,
 									);
-									setWork((currentWork) =>
-										currentWork
-											? { ...currentWork, viewerStatusState: nextStatus }
-											: currentWork,
+									void mutateWork(
+										(currentData) =>
+											currentData
+												? {
+														...currentData,
+														viewerStatusState: nextStatus,
+													}
+												: currentData,
+										{ revalidate: false },
 									);
 								} catch (error) {
 									setWatchStatus(work.viewerStatusState);
@@ -342,7 +323,7 @@ export function WorkPage() {
 										});
 										setComment("");
 										setRating(null);
-										setReloadKey((current) => current + 1);
+										void mutateWork();
 									} catch (error) {
 										setErrorMessage(getErrorMessage(error));
 									} finally {

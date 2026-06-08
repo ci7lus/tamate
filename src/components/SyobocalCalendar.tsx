@@ -2,6 +2,7 @@ import { Interweave } from "interweave";
 import { Url, UrlMatcher } from "interweave-autolink";
 import { startTransition, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import useSWR, { mutate as swrMutate } from "swr";
 
 import {
 	type AnnictWatchingWork,
@@ -13,7 +14,6 @@ import {
 	fetchSyobocalSchedule,
 	getInitialSyobocalDate,
 	parseSyobocalDateTime,
-	type SyobocalSchedule,
 	type SyobocalScheduleItem,
 	shiftSyobocalDate,
 } from "../lib/syobocal";
@@ -21,7 +21,7 @@ import { requestSearchTerm } from "../shared/search";
 import { useAnnictSession } from "./AnnictSessionProvider";
 
 const HOUR_HEIGHT = 112;
-const MIN_EMPTY_HOUR_HEIGHT = 24;
+const MIN_EMPTY_HOUR_HEIGHT = HOUR_HEIGHT * 0.5;
 const TIME_RAIL_WIDTH = 72;
 
 type TimedScheduleItem = {
@@ -272,7 +272,7 @@ const mergeSimulcastItems = (items: SyobocalScheduleItem[]) => {
 
 const buildTimelineLayout = (
 	items: SyobocalScheduleItem[],
-	rangeStartAt?: string,
+	_rangeStartAt?: string,
 	rangeEndAt?: string,
 ) => {
 	const timelineItems: TimedScheduleItem[] = items
@@ -282,9 +282,7 @@ const buildTimelineLayout = (
 			startAt: parseSyobocalDateTime(item.startAt),
 		}))
 		.sort((left, right) => left.startAt.getTime() - right.startAt.getTime());
-	const timelineStart = rangeStartAt
-		? parseSyobocalDateTime(rangeStartAt)
-		: timelineItems[0]?.startAt;
+	const timelineStart = timelineItems[0]?.startAt;
 	const timelineEnd = rangeEndAt
 		? parseSyobocalDateTime(rangeEndAt)
 		: timelineItems.at(-1)?.endAt;
@@ -314,19 +312,10 @@ const buildTimelineLayout = (
 		clusters.push(currentCluster);
 	}
 
-	const markers: TimelineMarker[] = [];
 	const positionedItems: TimelineLayoutItem[] = [];
 	const positionedClusters: TimelineCluster[] = [];
 	let top = 0;
 	let previousBoundary = timelineStart ?? null;
-
-	if (timelineStart) {
-		markers.push({
-			label: formatClockFromDate(timelineStart),
-			tone: "start",
-			top: 0,
-		});
-	}
 
 	for (const cluster of clusters) {
 		const clusterStart = cluster[0]?.startAt;
@@ -345,14 +334,6 @@ const buildTimelineLayout = (
 				timelineItem.endAt > currentEnd ? timelineItem.endAt : currentEnd,
 			clusterStart,
 		);
-
-		if (!timelineStart || clusterStart.getTime() !== timelineStart.getTime()) {
-			markers.push({
-				label: formatClockFromDate(clusterStart),
-				tone: "start",
-				top,
-			});
-		}
 
 		const columnEnds: Date[] = [];
 		const assignments = cluster.map((timelineItem) => {
@@ -444,6 +425,32 @@ const buildTimelineLayout = (
 			(diffMinutes(previousBoundary, timelineEnd) / 60) * MIN_EMPTY_HOUR_HEIGHT;
 	}
 
+	const markers: TimelineMarker[] = [];
+	const firstProgramStart = timelineItems[0]?.startAt;
+	if (firstProgramStart && positionedClusters.length > 0) {
+		const lastClusterEnd =
+			positionedClusters[positionedClusters.length - 1].endAt;
+		let currentTime = new Date(firstProgramStart);
+		while (currentTime <= lastClusterEnd) {
+			for (const cluster of positionedClusters) {
+				if (currentTime >= cluster.startAt && currentTime <= cluster.endAt) {
+					markers.push({
+						label: formatClockFromDate(currentTime),
+						tone: "start",
+						top: Math.max(
+							8,
+							cluster.top +
+								(diffMinutes(cluster.startAt, currentTime) / 60) *
+									cluster.pixelsPerHour,
+						),
+					});
+					break;
+				}
+			}
+			currentTime = new Date(currentTime.getTime() + 30 * 60_000);
+		}
+	}
+
 	return {
 		clusters: positionedClusters,
 		markers,
@@ -458,9 +465,38 @@ const buildTimelineLayout = (
 
 function ScheduleSkeleton() {
 	return (
-		<div className="grid gap-3">
-			<div className="h-16 animate-pulse rounded-2xl bg-gray-800" />
-			<div className="h-[68vh] animate-pulse rounded-3xl bg-gray-950/80" />
+		<div
+			className="flex overflow-hidden rounded-3xl border border-gray-800 bg-gray-950/80"
+			style={{ height: "100vh" }}
+		>
+			<div
+				className="shrink-0 border-r border-gray-800 px-2 py-3"
+				style={{ width: TIME_RAIL_WIDTH }}
+			>
+				<div className="space-y-20">
+					{[...Array(16)].map((i) => (
+						<div
+							className="h-3 animate-pulse rounded bg-gray-800"
+							key={i}
+							style={{ width: `${40 + (i % 3) * 15}%` }}
+						/>
+					))}
+				</div>
+			</div>
+			<div className="flex-1 p-2">
+				<div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+					{[
+						100, 80, 120, 90, 110, 70, 130, 85, 105, 95, 75, 115, 100, 80, 120,
+						90, 110, 70, 130, 85, 105, 95, 75, 115, 100, 80, 120, 90, 110, 70,
+					].map((h) => (
+						<div
+							className="animate-pulse rounded-2xl bg-gray-800"
+							key={h}
+							style={{ height: `${h}px` }}
+						/>
+					))}
+				</div>
+			</div>
 		</div>
 	);
 }
@@ -476,6 +512,7 @@ function ScheduleCard({
 	onOpenDetails: () => void;
 	position: TimelineLayoutItem;
 }) {
+	const [isHovered, setIsHovered] = useState(false);
 	const left = `${(position.columnIndex / position.columnCount) * 100}%`;
 	const baseSurfaceStyle = getCategorySurfaceStyle(item.category);
 	const surfaceStyle = isWatching
@@ -483,35 +520,47 @@ function ScheduleCard({
 		: item.warn > 0
 			? { ...baseSurfaceStyle, borderColor: "#38bdf8" }
 			: baseSurfaceStyle;
+	const bgColor = surfaceStyle.backgroundColor;
+	const hoverBgColor = (() => {
+		const r = parseInt(bgColor.slice(1, 3), 16);
+		const g = parseInt(bgColor.slice(3, 5), 16);
+		const b = parseInt(bgColor.slice(5, 7), 16);
+		return `rgba(${r}, ${g}, ${b}, 0.95)`;
+	})();
 
 	return (
 		<button
-			className="absolute z-0 overflow-hidden rounded-2xl border p-2 text-left shadow-[0_12px_28px_rgba(15,23,42,0.16)] transition hover:z-20 hover:-translate-y-0.5 hover:shadow-[0_16px_30px_rgba(15,23,42,0.22)]"
+			className="absolute z-0 overflow-hidden rounded-2xl border p-2 text-left transition"
 			onClick={onOpenDetails}
+			onMouseEnter={() => setIsHovered(true)}
+			onMouseLeave={() => setIsHovered(false)}
 			style={{
 				height: position.height,
 				left,
 				top: position.top,
 				width: `${100 / position.columnCount}%`,
 				...surfaceStyle,
+				backgroundColor: isHovered ? hoverBgColor : bgColor,
 			}}
 			type="button"
 		>
-			<div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-gray-700">
-				<span>{formatClock(item.startAt)}</span>
+			<div className="flex items-end justify-between gap-2 text-[11px] font-semibold text-gray-700">
+				<p className="text-ellipsis ellipsis whitespace-nowrap">
+					{formatClock(item.startAt)} - {formatClock(item.endAt)}
+				</p>
 				{isWatching ? (
 					<span className="rounded-full bg-[#FF8B46] p-2 text-[10px] text-white overflow-hidden text-ellipsis ellipsis whitespace-nowrap">
 						視聴中
 					</span>
 				) : null}
 			</div>
-			<div className="mt-1 overflow-hidden text-[16px] font-semibold leading-[1.15] text-gray-950">
+			<div className="mt-2 overflow-hidden text-[16px] font-semibold leading-[1.15] text-gray-950">
 				{item.shortTitle ?? item.title}
 			</div>
-			<div className="mt-1 overflow-hidden text-[13px] leading-tight text-sky-700">
+			<div className="mt-2 overflow-hidden text-[13px] leading-tight text-sky-700">
 				{item.channelName}
 			</div>
-			<div className="mt-1 overflow-hidden text-[12px] leading-tight text-gray-600">
+			<div className="mt-2 overflow-hidden text-[12px] leading-tight text-gray-600">
 				{buildProgramSummary(item)}
 			</div>
 		</button>
@@ -531,15 +580,24 @@ function ProgramActionModal({
 	onClose: () => void;
 	onOpenSearch: (term: string) => Promise<void> | void;
 }) {
+	const [entered, setEntered] = useState(false);
+
+	useEffect(() => {
+		const id = requestAnimationFrame(() => setEntered(true));
+		return () => cancelAnimationFrame(id);
+	}, []);
+
 	return (
 		<div className="fixed inset-0 z-50 grid place-items-end p-3 md:place-items-center">
 			<button
 				aria-label="モーダルを閉じる"
-				className="absolute inset-0 bg-gray-950/75"
+				className={`absolute inset-0 cursor-default transition-opacity duration-200 ease-out ${entered ? "bg-gray-950/75" : "bg-transparent"}`}
 				onClick={onClose}
 				type="button"
 			/>
-			<div className="relative z-10 w-full max-w-lg rounded-3xl border border-gray-700 bg-gray-900 p-4 text-gray-100 shadow-2xl">
+			<div
+				className={`relative z-10 w-full max-w-lg rounded-3xl border border-gray-700 bg-gray-900 p-4 text-gray-100 shadow-2xl transition-all duration-200 ease-out ${entered ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"}`}
+			>
 				<div className="flex items-start justify-between gap-3">
 					<div>
 						<p className="text-lg font-semibold leading-tight">
@@ -577,7 +635,7 @@ function ProgramActionModal({
 							onClick={onClose}
 							to={`/works/${annictId}`}
 						>
-							記録
+							作品ページ
 						</Link>
 					) : (
 						<button
@@ -626,96 +684,38 @@ export function SyobocalCalendar() {
 	const [mayRebroadcastHidden, setMayRebroadcastHidden] = useState(
 		storedFilters.mayRebroadcastHidden,
 	);
-	const [isScheduleLoading, setIsScheduleLoading] = useState(true);
-	const [isWatchingLoading, setIsWatchingLoading] = useState(false);
-	const [reloadKey, setReloadKey] = useState(0);
-	const [schedule, setSchedule] = useState<SyobocalSchedule | null>(null);
-	const [scheduleError, setScheduleError] = useState<string | null>(null);
-	const [watchingError, setWatchingError] = useState<string | null>(null);
-	const [watchingWorks, setWatchingWorks] = useState<AnnictWatchingWork[]>([]);
+	const {
+		data: schedule,
+		error: scheduleErrorRaw,
+		isLoading: isScheduleLoading,
+		mutate: mutateSchedule,
+	} = useSWR(["syobocal-schedule", businessDate], ([, date]) =>
+		fetchSyobocalSchedule(date),
+	);
+	const scheduleError = scheduleErrorRaw
+		? getErrorMessage(scheduleErrorRaw)
+		: null;
+
+	const {
+		data: watchingWorksRaw,
+		error: watchingErrorRaw,
+		isLoading: isWatchingLoading,
+	} = useSWR(
+		accessToken ? ["annict-watching", accessToken] : null,
+		([, token]) => fetchWatchingWorks(token),
+		{
+			revalidateIfStale: false,
+			revalidateOnFocus: false,
+			revalidateOnReconnect: false,
+		},
+	);
+	const watchingWorks = watchingWorksRaw ?? [];
+	const watchingError = watchingErrorRaw
+		? getErrorMessage(watchingErrorRaw)
+		: null;
 	const [activeProgramModal, setActiveProgramModal] =
 		useState<ProgramActionModalState | null>(null);
 	const [nowTick, setNowTick] = useState(() => Date.now());
-
-	useEffect(() => {
-		void reloadKey;
-
-		let isActive = true;
-		setIsScheduleLoading(true);
-		setScheduleError(null);
-
-		fetchSyobocalSchedule(businessDate)
-			.then((nextSchedule) => {
-				if (!isActive) {
-					return;
-				}
-
-				setSchedule(nextSchedule);
-			})
-			.catch((error) => {
-				if (!isActive) {
-					return;
-				}
-
-				setSchedule(null);
-				setScheduleError(getErrorMessage(error));
-			})
-			.finally(() => {
-				if (!isActive) {
-					return;
-				}
-
-				setIsScheduleLoading(false);
-			});
-
-		return () => {
-			isActive = false;
-		};
-	}, [businessDate, reloadKey]);
-
-	useEffect(() => {
-		if (!accessToken) {
-			setWatchingWorks([]);
-			setWatchingError(null);
-			setIsWatchingLoading(false);
-			return;
-		}
-
-		let isActive = true;
-		const timerId = window.setTimeout(() => {
-			setIsWatchingLoading(true);
-			setWatchingError(null);
-
-			fetchWatchingWorks(accessToken)
-				.then((nextWorks) => {
-					if (!isActive) {
-						return;
-					}
-
-					setWatchingWorks(nextWorks);
-				})
-				.catch((error) => {
-					if (!isActive) {
-						return;
-					}
-
-					setWatchingWorks([]);
-					setWatchingError(getErrorMessage(error));
-				})
-				.finally(() => {
-					if (!isActive) {
-						return;
-					}
-
-					setIsWatchingLoading(false);
-				});
-		}, 180);
-
-		return () => {
-			isActive = false;
-			window.clearTimeout(timerId);
-		};
-	}, [accessToken]);
 
 	const watchingWorksByTid = new Map<number, AnnictWatchingWork>();
 	for (const work of watchingWorks) {
@@ -877,8 +877,17 @@ export function SyobocalCalendar() {
 		}
 
 		if (accessToken) {
+			const searchKey = ["annict-search", accessToken, trimmedTerm];
 			try {
-				const works = await searchWorksByTitle(accessToken, trimmedTerm);
+				const works = await swrMutate(
+					searchKey,
+					searchWorksByTitle(accessToken, trimmedTerm),
+					{ revalidate: false },
+				);
+				if (!works) {
+					return;
+				}
+
 				const normalizedTerm = normalizeAnnictTitle(trimmedTerm);
 				const matchedWork =
 					works.find(
@@ -1173,7 +1182,9 @@ export function SyobocalCalendar() {
 									<p className="text-sm text-[#ffd5bb]">{scheduleError}</p>
 									<button
 										className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#FF8B46] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#f07732]"
-										onClick={() => setReloadKey((current) => current + 1)}
+										onClick={() => {
+											void mutateSchedule();
+										}}
 										type="button"
 									>
 										再読み込み
@@ -1193,7 +1204,7 @@ export function SyobocalCalendar() {
 									>
 										{timelineLayout.markers.map((marker) => (
 											<div
-												className="absolute left-0 right-0 px-2 text-xs font-semibold text-[#FF8B46]"
+												className="absolute left-0 right-0 -translate-y-1/2 px-2 text-xs font-semibold text-[#FF8B46]"
 												key={`${marker.label}-${marker.top}`}
 												style={{ top: marker.top }}
 											>
@@ -1208,7 +1219,7 @@ export function SyobocalCalendar() {
 									>
 										{nowTop != null ? (
 											<div
-												className="absolute left-0 right-0 z-10 border-t-2 border-red-500"
+												className="absolute left-0 right-0 z-30 border-t-2 border-red-500"
 												style={{ top: nowTop }}
 											/>
 										) : null}
@@ -1260,10 +1271,15 @@ export function SyobocalCalendar() {
 						</p>
 						{accessToken ? (
 							<div className="mt-6 space-y-3">
-								{isWatchingLoading || isLoading ? (
-									<p className="text-sm text-gray-400">
-										Annict を読み込み中です...
-									</p>
+								{isWatchingLoading || isLoading || isScheduleLoading ? (
+									<div className="mt-6 grid gap-2">
+										{[...Array(10)].map((i) => (
+											<div
+												className="h-11 animate-pulse rounded-2xl bg-gray-800"
+												key={i}
+											/>
+										))}
+									</div>
 								) : null}
 								{watchingError ? (
 									<p className="text-sm text-[#ffc29d]">{watchingError}</p>
@@ -1291,7 +1307,10 @@ export function SyobocalCalendar() {
 											);
 										})}
 									</div>
-								) : !isWatchingLoading ? (
+								) : !isWatchingLoading &&
+									!isLoading &&
+									!isScheduleLoading &&
+									schedule ? (
 									<p className="text-sm text-gray-400">
 										この日の番組表には、Annict
 										で「見てる」にしている作品はまだ見つかっていません。

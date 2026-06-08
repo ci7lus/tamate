@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
 	plugins: [
 		react(),
 		babel({ presets: [reactCompilerPreset()] }),
@@ -40,9 +40,9 @@ export default defineConfig({
 			registerType: "autoUpdate",
 			workbox: {
 				cleanupOutdatedCaches: true,
-				globPatterns: ["**/*.{js,png,svg,ico}"],
+				globPatterns: mode === "development" ? [] : ["**/*.{js,png,svg,ico}"],
 				navigateFallbackDenylist: [/^\/\.netlify\/functions\//],
 			},
 		}),
 	],
-});
+}));

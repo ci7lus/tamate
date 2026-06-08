@@ -5,6 +5,7 @@ import {
 	useEffect,
 	useState,
 } from "react";
+import useSWR, { mutate } from "swr";
 
 import {
 	type AnnictViewer,
@@ -37,59 +38,46 @@ function AnnictSessionProvider({ children }: PropsWithChildren) {
 	const [accessToken, setAccessToken] = useState<string | null>(() =>
 		readStorage(STORAGE_KEYS.annictAccessToken),
 	);
-	const [viewer, setViewer] = useState<AnnictViewer | null>(null);
-	const [isLoading, setIsLoading] = useState(Boolean(accessToken));
 	const [authError, setAuthError] = useState<string | null>(null);
 	const authUrl = buildAnnictAuthorizationUrl();
 
+	const {
+		data: viewer,
+		error: viewerErrorRaw,
+		isLoading,
+	} = useSWR(
+		accessToken ? ["annict-viewer", accessToken] : null,
+		([, token]) => fetchAnnictViewer(token),
+		{
+			errorRetryCount: 0,
+			revalidateIfStale: false,
+			revalidateOnFocus: false,
+			revalidateOnReconnect: false,
+		},
+	);
+
 	useEffect(() => {
-		if (!accessToken) {
-			setViewer(null);
-			setIsLoading(false);
+		if (!viewerErrorRaw) {
 			return;
 		}
 
-		let isActive = true;
-		setIsLoading(true);
-		setAuthError(null);
+		if (isUnauthorizedError(viewerErrorRaw)) {
+			removeStorage(STORAGE_KEYS.annictAccessToken);
+			setAccessToken(null);
+			setAuthError(
+				"Annictのセッションが切れています。もう一度ログインしてください。",
+			);
+			return;
+		}
 
-		fetchAnnictViewer(accessToken)
-			.then((nextViewer) => {
-				if (!isActive) {
-					return;
-				}
+		setAuthError(getErrorMessage(viewerErrorRaw));
+	}, [viewerErrorRaw]);
 
-				setViewer(nextViewer);
-			})
-			.catch((error) => {
-				if (!isActive) {
-					return;
-				}
-
-				if (isUnauthorizedError(error)) {
-					removeStorage(STORAGE_KEYS.annictAccessToken);
-					setAccessToken(null);
-					setViewer(null);
-					setAuthError(
-						"Annictのセッションが切れています。もう一度ログインしてください。",
-					);
-					return;
-				}
-
-				setAuthError(getErrorMessage(error));
-			})
-			.finally(() => {
-				if (!isActive) {
-					return;
-				}
-
-				setIsLoading(false);
-			});
-
-		return () => {
-			isActive = false;
-		};
-	}, [accessToken]);
+	useEffect(() => {
+		if (viewer) {
+			setAuthError(null);
+		}
+	}, [viewer]);
 
 	const login = () => {
 		if (!authUrl) {
@@ -110,8 +98,12 @@ function AnnictSessionProvider({ children }: PropsWithChildren) {
 		removeStorage(STORAGE_KEYS.annictAccessToken);
 		removeStorage(STORAGE_KEYS.pendingAuthPath);
 		setAccessToken(null);
-		setViewer(null);
 		setAuthError(null);
+		void mutate(
+			(key) => Array.isArray(key) && key[0] === "annict-viewer",
+			undefined,
+			{ revalidate: false },
+		);
 	};
 
 	return (
@@ -123,7 +115,7 @@ function AnnictSessionProvider({ children }: PropsWithChildren) {
 				isLoading,
 				login,
 				logout,
-				viewer,
+				viewer: viewer ?? null,
 			}}
 		>
 			{children}

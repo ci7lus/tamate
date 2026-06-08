@@ -6,8 +6,8 @@ import {
 	useState,
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import useSWR from "swr";
 
-import type { AnnictSearchWork } from "../lib/annict";
 import { searchWorksByTitle } from "../lib/annict";
 import { getErrorMessage } from "../lib/errors";
 import { SEARCH_TERM_EVENT_NAME } from "../shared/search";
@@ -17,11 +17,43 @@ function GlobalSearch() {
 	const navigate = useNavigate();
 	const { accessToken, isLoading } = useAnnictSession();
 	const [term, setTerm] = useState("");
-	const [errorMessage, setErrorMessage] = useState<string | null>(null);
 	const [isMenuVisible, setIsMenuVisible] = useState(false);
-	const [isSearching, setIsSearching] = useState(false);
-	const [works, setWorks] = useState<AnnictSearchWork[]>([]);
 	const deferredTerm = useDeferredValue(term.trim());
+	const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(deferredTerm);
+
+	useEffect(() => {
+		const timerId = window.setTimeout(
+			() => setDebouncedSearchTerm(deferredTerm),
+			280,
+		);
+		return () => window.clearTimeout(timerId);
+	}, [deferredTerm]);
+
+	const {
+		data: works,
+		error: searchErrorRaw,
+		isLoading: isSearching,
+	} = useSWR(
+		accessToken && debouncedSearchTerm.length >= 2
+			? ["annict-search", accessToken, debouncedSearchTerm]
+			: null,
+		([, token, term]) => searchWorksByTitle(token, term),
+		{
+			keepPreviousData: true,
+			revalidateIfStale: false,
+			revalidateOnFocus: false,
+			revalidateOnReconnect: false,
+		},
+	);
+
+	const searchError = searchErrorRaw ? getErrorMessage(searchErrorRaw) : null;
+	const searchResults = works ?? [];
+
+	useEffect(() => {
+		if (searchResults.length > 0) {
+			setIsMenuVisible(true);
+		}
+	}, [searchResults]);
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const searchRef = useRef<HTMLDivElement | null>(null);
 
@@ -53,7 +85,6 @@ function GlobalSearch() {
 			const customEvent = event as CustomEvent<{ term?: string }>;
 			const nextTerm = customEvent.detail?.term?.trim() ?? "";
 			setTerm(nextTerm);
-			setErrorMessage(null);
 			setIsMenuVisible(true);
 
 			window.requestAnimationFrame(() => {
@@ -67,59 +98,6 @@ function GlobalSearch() {
 			window.removeEventListener(SEARCH_TERM_EVENT_NAME, syncSearchTerm);
 		};
 	}, []);
-
-	useEffect(() => {
-		if (!accessToken) {
-			setWorks([]);
-			setIsSearching(false);
-			setErrorMessage(null);
-			return;
-		}
-
-		if (deferredTerm.length < 2) {
-			setWorks([]);
-			setIsSearching(false);
-			setErrorMessage(null);
-			return;
-		}
-
-		let isActive = true;
-		setIsSearching(true);
-		setErrorMessage(null);
-
-		const timerId = window.setTimeout(() => {
-			searchWorksByTitle(accessToken, deferredTerm)
-				.then((result) => {
-					if (!isActive) {
-						return;
-					}
-
-					setWorks(result);
-					setIsMenuVisible(true);
-				})
-				.catch((error) => {
-					if (!isActive) {
-						return;
-					}
-
-					setWorks([]);
-					setErrorMessage(getErrorMessage(error));
-					setIsMenuVisible(true);
-				})
-				.finally(() => {
-					if (!isActive) {
-						return;
-					}
-
-					setIsSearching(false);
-				});
-		}, 280);
-
-		return () => {
-			isActive = false;
-			window.clearTimeout(timerId);
-		};
-	}, [accessToken, deferredTerm]);
 
 	const moveToWork = (annictId: number) => {
 		setIsMenuVisible(false);
@@ -142,8 +120,8 @@ function GlobalSearch() {
 						return;
 					}
 
-					if (works[0]) {
-						moveToWork(works[0].annictId);
+					if (searchResults[0]) {
+						moveToWork(searchResults[0].annictId);
 					}
 				}}
 			>
@@ -176,16 +154,16 @@ function GlobalSearch() {
 					<p className="w-full px-4 py-3 text-left text-sm text-gray-400">
 						検索中です...
 					</p>
-				) : errorMessage ? (
+				) : searchError ? (
 					<p className="w-full px-4 py-3 text-left text-sm text-[#ffc29d]">
-						{errorMessage}
+						{searchError}
 					</p>
 				) : deferredTerm.length < 2 ? (
 					<p className="w-full px-4 py-3 text-left text-sm text-gray-400">
 						2文字以上入力すると候補を表示します。
 					</p>
-				) : works.length > 0 ? (
-					works.map((work) => (
+				) : searchResults.length > 0 ? (
+					searchResults.map((work) => (
 						<button
 							className="flex w-full items-center justify-between gap-3 border-b border-gray-700 bg-transparent px-4 py-3 text-left text-sm text-gray-100 transition hover:bg-gray-700 last:border-b-0 max-[720px]:flex-col max-[720px]:items-stretch"
 							key={work.annictId}

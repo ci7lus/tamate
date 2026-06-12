@@ -1,7 +1,7 @@
 import { Interweave } from "interweave";
 import { Url, UrlMatcher } from "interweave-autolink";
 import { startTransition, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import useSWR, { mutate as swrMutate } from "swr";
 
 import {
@@ -669,11 +669,16 @@ function ProgramActionModal({
 
 export function SyobocalCalendar() {
 	const storedFilters = readStoredFilters();
+	const location = useLocation();
 	const navigate = useNavigate();
 	const { accessToken, isLoading, login } = useAnnictSession();
-	const [businessDate, setBusinessDate] = useState(() =>
-		getInitialSyobocalDate(),
-	);
+	const [displayDate, setDisplayDate] = useState(() => {
+		const hashValue = location.hash.replace(/^#/, "").trim();
+		if (/^\d{4}-\d{2}-\d{2}$/.test(hashValue)) {
+			return hashValue;
+		}
+		return getInitialSyobocalDate();
+	});
 	const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
 	const [selectedChannelGroups, setSelectedChannelGroups] = useState<string[]>([
 		...storedFilters.channelGroups,
@@ -689,7 +694,7 @@ export function SyobocalCalendar() {
 		error: scheduleErrorRaw,
 		isLoading: isScheduleLoading,
 		mutate: mutateSchedule,
-	} = useSWR(["syobocal-schedule", businessDate], ([, date]) =>
+	} = useSWR(["syobocal-schedule", displayDate], ([, date]) =>
 		fetchSyobocalSchedule(date),
 	);
 	const scheduleError = scheduleErrorRaw
@@ -797,7 +802,7 @@ export function SyobocalCalendar() {
 		}
 
 		const recentFirstBroadcastCutoff =
-			getRecentFirstBroadcastCutoff(businessDate);
+			getRecentFirstBroadcastCutoff(displayDate);
 
 		return mergeSimulcastItems(
 			[...schedule.items]
@@ -822,10 +827,19 @@ export function SyobocalCalendar() {
 		schedule?.rangeStartAt,
 		schedule?.rangeEndAt,
 	);
-	const isCurrentBusinessDate = businessDate === getInitialSyobocalDate();
+	const isCurrentDisplayDate = displayDate === getInitialSyobocalDate();
 
 	useEffect(() => {
-		if (!isCurrentBusinessDate) {
+		const today = getInitialSyobocalDate();
+		const targetHash = displayDate === today ? "" : `#${displayDate}`;
+		if (location.hash === targetHash) {
+			return;
+		}
+		navigate({ hash: targetHash }, { replace: true });
+	}, [displayDate, location.hash, navigate]);
+
+	useEffect(() => {
+		if (!isCurrentDisplayDate) {
 			return;
 		}
 
@@ -837,7 +851,7 @@ export function SyobocalCalendar() {
 		return () => {
 			window.clearInterval(timerId);
 		};
-	}, [isCurrentBusinessDate]);
+	}, [isCurrentDisplayDate]);
 
 	useEffect(() => {
 		if (!activeProgramModal) {
@@ -946,7 +960,7 @@ export function SyobocalCalendar() {
 		setMayRebroadcastHidden((current) => !current);
 	};
 
-	const nowTop = isCurrentBusinessDate
+	const nowTop = isCurrentDisplayDate
 		? (() => {
 				if (!schedule) {
 					return null;
@@ -997,7 +1011,7 @@ export function SyobocalCalendar() {
 							<button
 								className="inline-flex min-h-11 items-center justify-center rounded-full border border-gray-700 bg-gray-800 px-4 py-2 text-sm font-medium text-gray-100 transition hover:bg-gray-700"
 								onClick={() =>
-									setBusinessDate(shiftSyobocalDate(businessDate, -1))
+									setDisplayDate(shiftSyobocalDate(displayDate, -1))
 								}
 								type="button"
 							>
@@ -1005,14 +1019,14 @@ export function SyobocalCalendar() {
 							</button>
 							<input
 								className="min-h-11 rounded-full border border-gray-700 bg-gray-950 px-4 py-2 text-sm text-gray-100 outline-none focus:border-[#FF8B46]"
-								onChange={(event) => setBusinessDate(event.target.value)}
+								onChange={(event) => setDisplayDate(event.target.value)}
 								type="date"
-								value={businessDate}
+								value={displayDate}
 							/>
 							<button
 								className="inline-flex min-h-11 items-center justify-center rounded-full border border-gray-700 bg-gray-800 px-4 py-2 text-sm font-medium text-gray-100 transition hover:bg-gray-700"
 								onClick={() =>
-									setBusinessDate(shiftSyobocalDate(businessDate, 1))
+									setDisplayDate(shiftSyobocalDate(displayDate, 1))
 								}
 								type="button"
 							>
@@ -1020,7 +1034,7 @@ export function SyobocalCalendar() {
 							</button>
 							<button
 								className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#FF8B46] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#f07732]"
-								onClick={() => setBusinessDate(getInitialSyobocalDate())}
+								onClick={() => setDisplayDate(getInitialSyobocalDate())}
 								type="button"
 							>
 								今日

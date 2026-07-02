@@ -962,19 +962,19 @@ export function SyobocalCalendar() {
 
 	const nowTop = isCurrentDisplayDate
 		? (() => {
-				if (!schedule) {
+				const firstCluster = timelineLayout.clusters[0];
+				const lastCluster = timelineLayout.clusters.at(-1);
+				if (!firstCluster || !lastCluster) {
 					return null;
 				}
 
 				const now = new Date(nowTick);
-				const rangeStart = parseSyobocalDateTime(schedule.rangeStartAt);
-				const rangeEnd = parseSyobocalDateTime(schedule.rangeEndAt);
-				if (now < rangeStart || now > rangeEnd) {
+				if (now < firstCluster.startAt || now > lastCluster.endAt) {
 					return null;
 				}
 
 				let currentTop = 0;
-				let previousBoundary = rangeStart;
+				let previousBoundary = firstCluster.startAt;
 				for (const cluster of timelineLayout.clusters) {
 					if (now < cluster.startAt) {
 						return (

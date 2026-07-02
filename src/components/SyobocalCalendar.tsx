@@ -178,6 +178,10 @@ const buildProgramSummary = (item: SyobocalScheduleItem) => {
 	return parts.join(" ");
 };
 
+const isFirstRunBatch = (item: SyobocalScheduleItem) =>
+	item.comment?.includes("初回") === true ||
+	item.subtitle?.includes("初回") === true;
+
 const getPreferredCardHeight = (item: SyobocalScheduleItem) => {
 	const summary = buildProgramSummary(item);
 	const title = item.shortTitle ?? item.title;
@@ -814,7 +818,7 @@ export function SyobocalCalendar() {
 							item.firstBroadcastAt === null ||
 							(parseSyobocalDateTime(item.firstBroadcastAt) >=
 								recentFirstBroadcastCutoff &&
-								!item.subtitle?.includes("～"))) &&
+								(!item.subtitle?.includes("～") || isFirstRunBatch(item)))) &&
 						(availableChannelGroups.length === 0 ||
 							(item.channelGroupLabel !== null &&
 								selectedChannelGroupSet.has(item.channelGroupLabel))),
@@ -962,19 +966,19 @@ export function SyobocalCalendar() {
 
 	const nowTop = isCurrentDisplayDate
 		? (() => {
-				if (!schedule) {
+				const firstCluster = timelineLayout.clusters[0];
+				const lastCluster = timelineLayout.clusters.at(-1);
+				if (!firstCluster || !lastCluster) {
 					return null;
 				}
 
 				const now = new Date(nowTick);
-				const rangeStart = parseSyobocalDateTime(schedule.rangeStartAt);
-				const rangeEnd = parseSyobocalDateTime(schedule.rangeEndAt);
-				if (now < rangeStart || now > rangeEnd) {
+				if (now < firstCluster.startAt || now > lastCluster.endAt) {
 					return null;
 				}
 
 				let currentTop = 0;
-				let previousBoundary = rangeStart;
+				let previousBoundary = firstCluster.startAt;
 				for (const cluster of timelineLayout.clusters) {
 					if (now < cluster.startAt) {
 						return (

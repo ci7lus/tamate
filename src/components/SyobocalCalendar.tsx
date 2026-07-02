@@ -178,6 +178,10 @@ const buildProgramSummary = (item: SyobocalScheduleItem) => {
 	return parts.join(" ");
 };
 
+const isFirstRunBatch = (item: SyobocalScheduleItem) =>
+	item.comment?.includes("初回") === true ||
+	item.subtitle?.includes("初回") === true;
+
 const getPreferredCardHeight = (item: SyobocalScheduleItem) => {
 	const summary = buildProgramSummary(item);
 	const title = item.shortTitle ?? item.title;
@@ -814,7 +818,7 @@ export function SyobocalCalendar() {
 							item.firstBroadcastAt === null ||
 							(parseSyobocalDateTime(item.firstBroadcastAt) >=
 								recentFirstBroadcastCutoff &&
-								!item.subtitle?.includes("～"))) &&
+								(!item.subtitle?.includes("～") || isFirstRunBatch(item)))) &&
 						(availableChannelGroups.length === 0 ||
 							(item.channelGroupLabel !== null &&
 								selectedChannelGroupSet.has(item.channelGroupLabel))),

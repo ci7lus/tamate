@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import useSWR from "swr";
 
@@ -13,12 +13,14 @@ import {
 	updateAnnictWorkStatus,
 } from "../lib/annict";
 import { getErrorMessage } from "../lib/errors";
+import { recordVisitedWork } from "../shared/workHistory";
 import { useAnnictSession } from "./AnnictSessionProvider";
 
 export function WorkPage() {
 	const { annictId } = useParams();
 	const parsedAnnictId = Number(annictId);
 	const { accessToken, login } = useAnnictSession();
+	const recordedVisitId = useRef<number | null>(null);
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
 	const [isRecording, setIsRecording] = useState(false);
 	const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
@@ -45,6 +47,19 @@ export function WorkPage() {
 	);
 
 	const workError = workErrorRaw ? getErrorMessage(workErrorRaw) : null;
+
+	useEffect(() => {
+		if (!work || recordedVisitId.current === work.annictId) {
+			return;
+		}
+
+		recordedVisitId.current = work.annictId;
+		recordVisitedWork({
+			annictId: work.annictId,
+			imageUrl: work.imageUrl,
+			title: work.title,
+		});
+	}, [work]);
 
 	useEffect(() => {
 		if (!work) {

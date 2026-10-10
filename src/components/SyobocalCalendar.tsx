@@ -867,8 +867,14 @@ export function SyobocalCalendar() {
 	};
 
 	const openSearch = async (term: string) => {
-		const trimmedTerm = term.trim();
+		const originalTerm = term.trim();
+		const trimmedTerm = originalTerm.replace(/\s*\(\d+\)$/, "").trim();
+		const removedNumericSuffix = trimmedTerm !== originalTerm;
 		if (!trimmedTerm) {
+			return;
+		}
+		if (removedNumericSuffix) {
+			requestSearchTerm(trimmedTerm);
 			return;
 		}
 
@@ -891,6 +897,10 @@ export function SyobocalCalendar() {
 					) ?? works[0];
 
 				if (matchedWork) {
+					requestSearchTerm(trimmedTerm, {
+						focus: false,
+						openMenu: false,
+					});
 					startTransition(() => {
 						navigate(`/works/${matchedWork.annictId}`);
 					});

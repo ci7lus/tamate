@@ -5,4 +5,5 @@ export const STORAGE_KEYS = {
 	calendarPlaceholderShape: "tamate.calendar.placeholderShape.v1",
 	lastVisitedPath: "tamate.navigation.lastVisitedPath",
 	pendingAuthPath: "tamate.navigation.pendingAuthPath",
+	workHistory: "tamate.navigation.workHistory",
 } as const;

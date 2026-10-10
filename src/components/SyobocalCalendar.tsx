@@ -6,6 +6,7 @@ import useSWR, { mutate as swrMutate } from "swr";
 
 import {
 	type AnnictWatchingWork,
+	fetchWatchingWorkProgress,
 	fetchWatchingWorks,
 	searchWorksByTitle,
 } from "../lib/annict";
@@ -27,6 +28,60 @@ import { CalendarPlaceholder } from "./CalendarPlaceholder";
 const HOUR_HEIGHT = 144;
 const MIN_EMPTY_HOUR_HEIGHT = HOUR_HEIGHT * 0.25;
 const HALF_HOUR_MS = 30 * 60_000;
+const SEASON_START_MONTH: Record<string, number> = {
+	winter: 0,
+	spring: 3,
+	summer: 6,
+	autumn: 9,
+};
+
+const getBroadcastDate = (work: AnnictWatchingWork) => {
+	if (work.releasedOn) {
+		const releasedOn = Date.parse(work.releasedOn);
+		if (Number.isFinite(releasedOn)) {
+			return releasedOn;
+		}
+	}
+
+	const season = work.seasonName?.match(
+		/^(\d{4})-(winter|spring|summer|autumn)$/i,
+	);
+	if (!season) {
+		return null;
+	}
+
+	return Date.UTC(
+		Number(season[1]),
+		SEASON_START_MONTH[season[2].toLowerCase()],
+		1,
+	);
+};
+
+const compareWatchingWorksByBroadcastDate = (
+	first: AnnictWatchingWork | undefined,
+	second: AnnictWatchingWork | undefined,
+) => {
+	if (!first) {
+		return second ? 1 : 0;
+	}
+	if (!second) {
+		return -1;
+	}
+
+	const firstDate = getBroadcastDate(first);
+	const secondDate = getBroadcastDate(second);
+	if (firstDate == null) {
+		return secondDate == null
+			? first.title.localeCompare(second.title, "ja")
+			: 1;
+	}
+	if (secondDate == null) {
+		return -1;
+	}
+	return (
+		secondDate - firstDate || first.title.localeCompare(second.title, "ja")
+	);
+};
 
 type TimedScheduleItem = {
 	endAt: Date;
@@ -637,11 +692,77 @@ function ProgramActionModal({
 	);
 }
 
+function WatchingWorkRow({
+	episodeCount,
+	onOpen,
+	programChannel,
+	programTime,
+	title,
+	watchedEpisodeCount,
+}: {
+	episodeCount: number;
+	onOpen: () => void;
+	programChannel?: string;
+	programTime?: string;
+	title: string;
+	watchedEpisodeCount: number;
+}) {
+	const progressValue = Math.max(
+		0,
+		Math.min(watchedEpisodeCount, episodeCount),
+	);
+	const progressPercent =
+		episodeCount > 0 ? (progressValue / episodeCount) * 100 : 0;
+
+	return (
+		<button
+			className="flex min-w-0 w-full flex-col gap-1 rounded-2xl border border-[#FF8B46]/30 bg-[#FF8B46]/10 px-3 py-2 text-left text-sm text-gray-100 transition hover:bg-[#FF8B46]/20"
+			onClick={onOpen}
+			type="button"
+		>
+			<span className="flex min-w-0 w-full items-center justify-between gap-2">
+				<span className="min-w-0 flex-1">
+					<span className="block overflow-hidden text-ellipsis whitespace-nowrap">
+						{title}
+					</span>
+					<span className="mt-1 block truncate text-xs text-gray-400">
+						視聴済み {watchedEpisodeCount} / {episodeCount}話
+					</span>
+				</span>
+				{programTime ? (
+					<span className="flex min-w-0 max-w-[45%] shrink-0 items-center gap-1 text-right text-xs">
+						{programChannel ? (
+							<span className="min-w-0 truncate text-gray-400">
+								{programChannel}
+							</span>
+						) : null}
+						<span className="shrink-0 text-[#ffd5bb]">{programTime}</span>
+					</span>
+				) : null}
+			</span>
+			<span
+				aria-label={`視聴済み ${watchedEpisodeCount} / ${episodeCount}話`}
+				aria-valuemax={Math.max(episodeCount, 1)}
+				aria-valuemin={0}
+				aria-valuenow={progressValue}
+				className="block h-1.5 w-full overflow-hidden rounded-full bg-gray-700"
+				role="progressbar"
+			>
+				<span
+					className="block h-full rounded-full bg-[#FF8B46] transition-[width]"
+					style={{ width: `${progressPercent}%` }}
+				/>
+			</span>
+		</button>
+	);
+}
+
 export function SyobocalCalendar() {
 	const storedFilters = readStoredFilters();
 	const location = useLocation();
 	const navigate = useNavigate();
 	const { accessToken, isLoading, login } = useAnnictSession();
+	const todayDate = getInitialSyobocalDate();
 	const [displayDate, setDisplayDate] = useState(() => {
 		const hashValue = location.hash.replace(/^#/, "").trim();
 		if (/^\d{4}-\d{2}-\d{2}$/.test(hashValue)) {
@@ -676,7 +797,7 @@ export function SyobocalCalendar() {
 		error: watchingErrorRaw,
 		isLoading: isWatchingLoading,
 	} = useSWR(
-		accessToken ? ["annict-watching", accessToken] : null,
+		accessToken ? ["annict-watching-v2", accessToken] : null,
 		([, token]) => fetchWatchingWorks(token),
 		{
 			revalidateIfStale: false,
@@ -688,6 +809,27 @@ export function SyobocalCalendar() {
 	const watchingError = watchingErrorRaw
 		? getErrorMessage(watchingErrorRaw)
 		: null;
+	const watchingWorkIds = watchingWorks.map((work) => work.annictId);
+	const watchingWorkIdsKey = watchingWorkIds.join(",");
+	const {
+		data: watchingProgress,
+		isLoading: isWatchingProgressLoading,
+		error: watchingProgressErrorRaw,
+	} = useSWR(
+		accessToken && watchingWorksRaw && watchingWorkIdsKey
+			? ["annict-watching-progress", accessToken, watchingWorkIdsKey]
+			: null,
+		([, token, ids]) =>
+			fetchWatchingWorkProgress(
+				token,
+				ids.split(",").map((id) => Number.parseInt(id, 10)),
+			),
+		{
+			revalidateIfStale: false,
+			revalidateOnFocus: false,
+			revalidateOnReconnect: false,
+		},
+	);
 	const [activeProgramModal, setActiveProgramModal] =
 		useState<ProgramActionModalState | null>(null);
 	const [nowTick, setNowTick] = useState(() => Date.now());
@@ -800,7 +942,7 @@ export function SyobocalCalendar() {
 	const calendarShapeStorageValue = schedule
 		? serializeCalendarPlaceholderShape(timelineLayout)
 		: null;
-	const isCurrentDisplayDate = displayDate === getInitialSyobocalDate();
+	const isCurrentDisplayDate = displayDate === todayDate;
 
 	useEffect(() => {
 		if (calendarShapeStorageValue) {
@@ -852,14 +994,60 @@ export function SyobocalCalendar() {
 		};
 	}, [activeProgramModal]);
 
-	const matchedPrograms = [
-		...new Map(
-			visibleItems
-				.filter((item) => watchingWorksByTid.has(item.titleId))
-				.map((item) => [item.titleId, item]),
-		).values(),
-	];
+	const displayScheduleWatchingTitleIds = new Set(
+		visibleItems
+			.filter((item) => watchingWorksByTid.has(item.titleId))
+			.map((item) => item.titleId),
+	);
+	const scheduleChannelOrder = new Map<number, number>();
+	let channelOrder = 0;
+	for (const group of schedule?.channelGroups ?? []) {
+		for (const channelId of group.channelIds) {
+			scheduleChannelOrder.set(channelId, channelOrder);
+			channelOrder += 1;
+		}
+	}
+	const displayScheduleWatchingItems = visibleItems
+		.filter((item) => watchingWorksByTid.has(item.titleId))
+		.sort((first, second) => {
+			const startOrder = first.startAt.localeCompare(second.startAt);
+			if (startOrder !== 0) {
+				return startOrder;
+			}
 
+			const firstChannelOrder =
+				scheduleChannelOrder.get(first.channelId) ?? Number.MAX_SAFE_INTEGER;
+			const secondChannelOrder =
+				scheduleChannelOrder.get(second.channelId) ?? Number.MAX_SAFE_INTEGER;
+			return (
+				firstChannelOrder - secondChannelOrder ||
+				first.channelName.localeCompare(second.channelName, "ja")
+			);
+		});
+	const displayScheduleWatchingProgramByTitleId = new Map<
+		number,
+		(typeof displayScheduleWatchingItems)[number]
+	>();
+	for (const item of displayScheduleWatchingItems) {
+		if (!displayScheduleWatchingProgramByTitleId.has(item.titleId)) {
+			displayScheduleWatchingProgramByTitleId.set(item.titleId, item);
+		}
+	}
+	const displayScheduleWatchingPrograms = [
+		...displayScheduleWatchingProgramByTitleId.values(),
+	];
+	const otherWatchingWorks = watchingWorks
+		.filter(
+			(work) =>
+				!work.syobocalTid ||
+				!displayScheduleWatchingTitleIds.has(work.syobocalTid),
+		)
+		.sort(compareWatchingWorksByBroadcastDate);
+	const isWatchingWidgetLoading =
+		isWatchingLoading ||
+		isLoading ||
+		isScheduleLoading ||
+		isWatchingProgressLoading;
 	const openWatchingWork = (work: AnnictWatchingWork) => {
 		startTransition(() => {
 			navigate(`/works/${work.annictId}`);
@@ -990,8 +1178,8 @@ export function SyobocalCalendar() {
 		: null;
 
 	return (
-		<div className="flex flex-col gap-3 md:flex-row leading-1">
-			<section className="w-full md:w-2/3">
+		<div className="flex min-w-0 flex-col gap-3 leading-1 md:flex-row">
+			<section className="min-w-0 w-full md:w-2/3">
 				<div className="rounded-3xl border border-gray-800 bg-gray-900 p-4 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-3">
 					<div className="flex flex-wrap items-center justify-between gap-3 px-2">
 						<h1 className="text-2xl font-semibold text-gray-50">番組表</h1>
@@ -1298,65 +1486,130 @@ export function SyobocalCalendar() {
 				</div>
 			</section>
 
-			<aside className="w-full md:w-1/3">
-				<div className="grid gap-3">
-					<section className="rounded-3xl border border-gray-800 bg-gray-900 p-4 shadow-2xl max-[720px]:rounded-2xl">
+			<aside className="min-w-0 w-full md:w-1/3">
+				<div className="grid min-w-0 gap-3">
+					<section className="min-w-0 rounded-3xl border border-gray-800 bg-gray-900 p-4 shadow-2xl max-[720px]:rounded-2xl">
 						<p className="text-md font-semibold mt-2">
 							Annictで「見てる」の作品
 						</p>
 						{accessToken ? (
-							<div className="mt-6 space-y-3">
-								{isWatchingLoading || isLoading || isScheduleLoading ? (
-									<div className="mt-6 grid gap-2">
-										{[...Array(10)].map((i) => (
+							<div className="mt-6 min-w-0 space-y-3">
+								{isWatchingWidgetLoading ? (
+									<div className="grid gap-2">
+										{[1, 2, 3, 4, 5, 6].map((skeleton) => (
 											<div
-												className="h-11 animate-pulse rounded-2xl bg-gray-800"
-												key={i}
+												className="h-12 animate-pulse rounded-2xl bg-gray-800"
+												key={skeleton}
 											/>
 										))}
 									</div>
-								) : null}
-								{watchingError ? (
-									<p className="text-sm text-[#ffc29d]">{watchingError}</p>
-								) : null}
-								{matchedPrograms.length > 0 ? (
-									<div className="grid gap-2">
-										{matchedPrograms.slice(0, 8).map((item) => {
-											const work = watchingWorksByTid.get(item.titleId);
-											if (!work) {
-												return null;
-											}
-
-											return (
-												<button
-													className="flex items-center justify-between rounded-2xl border border-[#FF8B46]/30 bg-[#FF8B46]/10 px-3 py-2 text-left text-sm text-gray-100 transition hover:bg-[#FF8B46]/20"
-													key={item.programId}
-													onClick={() => openWatchingWork(work)}
-													type="button"
-												>
-													<span>{item.shortTitle ?? item.title}</span>
-													<span className="text-xs text-[#ffd5bb]">
-														{formatClock(item.startAt)}
+								) : (
+									<>
+										{watchingError ? (
+											<p className="text-sm text-[#ffc29d]">{watchingError}</p>
+										) : null}
+										{watchingProgressErrorRaw ? (
+											<p className="text-sm text-[#ffc29d]">
+												進捗情報の一部を取得できませんでした。
+											</p>
+										) : null}
+										<div className="min-w-0 space-y-5">
+											<section>
+												<div className="mb-2 flex items-center justify-between">
+													<p className="text-sm font-semibold text-gray-200">
+														番組表内
+													</p>
+													<span className="text-xs text-gray-500">
+														{displayScheduleWatchingPrograms.length}作品
 													</span>
-												</button>
-											);
-										})}
-									</div>
-								) : !isWatchingLoading &&
-									!isLoading &&
-									!isScheduleLoading &&
-									schedule ? (
-									<p className="text-sm text-gray-400">
-										この日の番組表には、Annict
-										で「見てる」にしている作品はまだ見つかっていません。
-									</p>
-								) : null}
+												</div>
+												{scheduleError ? (
+													<p className="text-sm text-gray-400">
+														番組表を取得できませんでした。
+													</p>
+												) : displayScheduleWatchingPrograms.length > 0 ? (
+													<div className="grid min-w-0 gap-2">
+														{displayScheduleWatchingPrograms.map((item) => {
+															const work = watchingWorksByTid.get(item.titleId);
+															if (!work) {
+																return null;
+															}
+															const progress =
+																watchingProgress?.[work.annictId];
+															const title = item.shortTitle ?? item.title;
+															const episodeNumber =
+																item.count === null ? null : `${item.count}話`;
+															const displayTitle =
+																episodeNumber && !title.includes(episodeNumber)
+																	? `${title} ${episodeNumber}`
+																	: title;
+
+															return (
+																<WatchingWorkRow
+																	episodeCount={work.episodeCount}
+																	key={work.annictId}
+																	onOpen={() => openWatchingWork(work)}
+																	programChannel={item.channelName}
+																	programTime={formatClock(item.startAt)}
+																	title={displayTitle}
+																	watchedEpisodeCount={
+																		progress?.watchedEpisodeCount ?? 0
+																	}
+																/>
+															);
+														})}
+													</div>
+												) : (
+													<p className="text-sm text-gray-400">
+														該当する作品はありません。
+													</p>
+												)}
+											</section>
+											<section>
+												<div className="mb-2 flex items-center justify-between">
+													<p className="text-sm font-semibold text-gray-200">
+														番組表外
+													</p>
+													<span className="text-xs text-gray-500">
+														{otherWatchingWorks.length}作品
+													</span>
+												</div>
+												{otherWatchingWorks.length > 0 ? (
+													<div className="grid min-w-0 gap-2">
+														{otherWatchingWorks.map((work) => {
+															const progress =
+																watchingProgress?.[work.annictId];
+
+															return (
+																<WatchingWorkRow
+																	episodeCount={work.episodeCount}
+																	key={work.annictId}
+																	onOpen={() => openWatchingWork(work)}
+																	title={work.title}
+																	watchedEpisodeCount={
+																		progress?.watchedEpisodeCount ?? 0
+																	}
+																/>
+															);
+														})}
+													</div>
+												) : (
+													<p className="text-sm text-gray-400">
+														{watchingWorks.length === 0
+															? "「見てる」作品はありません。"
+															: "対象の作品はありません。"}
+													</p>
+												)}
+											</section>
+										</div>
+									</>
+								)}
 							</div>
 						) : (
 							<div className="mt-3 space-y-3">
 								<p className="text-sm text-gray-400">
 									ログインすると、Annict
-									で視聴中の作品を番組表上で強調表示できます。
+									上で「見てる」の作品と合わせて表示できます。
 								</p>
 								<button
 									className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#FF8B46] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#f07732] disabled:cursor-not-allowed disabled:opacity-50"

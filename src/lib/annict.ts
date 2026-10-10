@@ -53,9 +53,16 @@ export type AnnictSearchWork = {
 
 export type AnnictWatchingWork = {
 	annictId: number;
+	episodeCount: number;
+	releasedOn: string | null;
+	seasonName: string | null;
 	syobocalTid: number | null;
 	title: string;
 	titleKana: string | null;
+};
+
+export type AnnictWatchingWorkProgress = {
+	watchedEpisodeCount: number;
 };
 
 export type AnnictEpisode = {
@@ -417,7 +424,10 @@ export const fetchWatchingWorks = async (accessToken: string) => {
 
 	while (nextPage) {
 		const params = new URLSearchParams([
-			["fields", "id,title,title_kana,syobocal_tid"],
+			[
+				"fields",
+				"id,title,title_kana,released_on,season_name,syobocal_tid,episodes_count",
+			],
 			["filter_status", "watching"],
 			["page", String(nextPage)],
 			["per_page", "50"],
@@ -425,7 +435,10 @@ export const fetchWatchingWorks = async (accessToken: string) => {
 		const payload: {
 			next_page: number | null;
 			works: Array<{
+				episodes_count: number | null;
 				id: number;
+				released_on: string | null;
+				season_name: string | null;
 				syobocal_tid: number | string | null;
 				title: string;
 				title_kana: string | null;
@@ -435,12 +448,18 @@ export const fetchWatchingWorks = async (accessToken: string) => {
 		works.push(
 			...payload.works.map(
 				(work: {
+					episodes_count: number | null;
 					id: number;
+					released_on: string | null;
+					season_name: string | null;
 					syobocal_tid: number | string | null;
 					title: string;
 					title_kana: string | null;
 				}) => ({
 					annictId: work.id,
+					episodeCount: work.episodes_count ?? 0,
+					releasedOn: normalizeOptionalString(work.released_on),
+					seasonName: normalizeOptionalString(work.season_name),
 					syobocalTid:
 						typeof work.syobocal_tid === "number"
 							? work.syobocal_tid
@@ -457,6 +476,67 @@ export const fetchWatchingWorks = async (accessToken: string) => {
 	}
 
 	return works;
+};
+
+export const fetchWatchingWorkProgress = async (
+	accessToken: string,
+	annictIds: number[],
+) => {
+	const progressByAnnictId: Record<number, AnnictWatchingWorkProgress> = {};
+	const uniqueAnnictIds = [...new Set(annictIds)];
+	const chunks: number[][] = [];
+
+	for (let index = 0; index < uniqueAnnictIds.length; index += 50) {
+		chunks.push(uniqueAnnictIds.slice(index, index + 50));
+	}
+
+	await Promise.all(
+		chunks.map(async (chunk) => {
+			const data = await requestAnnictGraphQL<{
+				searchWorks: {
+					nodes: Array<
+						Nullable<{
+							annictId: number;
+							episodes: Nullable<{
+								nodes: Array<
+									Nullable<{
+										viewerDidTrack: boolean;
+									}>
+								>;
+							}>;
+						}>
+					>;
+				};
+			}>(
+				accessToken,
+				`query WatchingWorkProgress($annictIds: [Int!]!) {
+					searchWorks(annictIds: $annictIds, first: 50) {
+						nodes {
+							annictId
+							episodes(first: 100) {
+								nodes {
+									viewerDidTrack
+								}
+							}
+						}
+					}
+				}`,
+				{ annictIds: chunk },
+			);
+
+			for (const work of compact(data.searchWorks.nodes)) {
+				const watchedEpisodeCount = compact(work.episodes?.nodes).filter(
+					(episode) => episode.viewerDidTrack,
+				).length;
+
+				progressByAnnictId[work.annictId] = {
+					watchedEpisodeCount,
+				};
+			}
+		}),
+	);
+
+	return progressByAnnictId;
 };
 
 export const updateAnnictWorkStatus = async (

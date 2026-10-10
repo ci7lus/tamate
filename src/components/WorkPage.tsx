@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import useSWR from "swr";
 
@@ -13,12 +13,14 @@ import {
 	updateAnnictWorkStatus,
 } from "../lib/annict";
 import { getErrorMessage } from "../lib/errors";
+import { recordVisitedWork } from "../shared/workHistory";
 import { useAnnictSession } from "./AnnictSessionProvider";
 
 export function WorkPage() {
 	const { annictId } = useParams();
 	const parsedAnnictId = Number(annictId);
 	const { accessToken, login } = useAnnictSession();
+	const recordedVisitId = useRef<number | null>(null);
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
 	const [isRecording, setIsRecording] = useState(false);
 	const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
@@ -45,6 +47,19 @@ export function WorkPage() {
 	);
 
 	const workError = workErrorRaw ? getErrorMessage(workErrorRaw) : null;
+
+	useEffect(() => {
+		if (!work || recordedVisitId.current === work.annictId) {
+			return;
+		}
+
+		recordedVisitId.current = work.annictId;
+		recordVisitedWork({
+			annictId: work.annictId,
+			imageUrl: work.imageUrl,
+			title: work.title,
+		});
+	}, [work]);
 
 	useEffect(() => {
 		if (!work) {
@@ -188,6 +203,16 @@ export function WorkPage() {
 						>
 							Annictで開く
 						</a>
+						{work.syobocalTid ? (
+							<a
+								className="text-sky-300 underline underline-offset-4 transition hover:text-sky-200"
+								href={`https://cal.syoboi.jp/tid/${work.syobocalTid}`}
+								rel="noopener"
+								target="_blank"
+							>
+								しょぼかるで開く
+							</a>
+						) : null}
 						{work.officialSiteUrl ? (
 							<a
 								className="text-sky-300 underline underline-offset-4 transition hover:text-sky-200"
@@ -264,9 +289,9 @@ export function WorkPage() {
 				</div>
 			</section>
 
-			<section className="grid gap-6 md:grid-cols-[minmax(280px,1fr)_minmax(0,2fr)]">
+			<section className="grid gap-3 md:grid-cols-[minmax(280px,1fr)_minmax(0,2fr)]">
 				<article
-					className="relative flex flex-col gap-4 overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4"
+					className="order-2 relative flex flex-col gap-4 overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4 md:order-1"
 					style={{ minHeight: 420 }}
 				>
 					<div
@@ -281,11 +306,7 @@ export function WorkPage() {
 										: ""
 								} ${episode.viewerDidTrack ? "text-gray-500" : ""}`}
 								key={episode.id}
-								onClick={() => {
-									setSelectedEpisodeId((currentEpisodeId) =>
-										currentEpisodeId === episode.id ? null : episode.id,
-									);
-								}}
+								onClick={() => setSelectedEpisodeId(episode.id)}
 								type="button"
 							>
 								<span>
@@ -299,7 +320,7 @@ export function WorkPage() {
 				</article>
 				{selectedEpisode && (
 					<article
-						className="relative overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4"
+						className="order-1 relative overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4 md:order-2"
 						style={{ minHeight: 420 }}
 					>
 						{selectedEpisode ? (
@@ -323,6 +344,15 @@ export function WorkPage() {
 										});
 										setComment("");
 										setRating(null);
+										const selectedEpisodeIndex = work.episodes.findIndex(
+											(episode) => episode.id === selectedEpisode.id,
+										);
+										const nextUnrecordedEpisode = work.episodes
+											.slice(selectedEpisodeIndex + 1)
+											.find((episode) => episode.viewerRecordsCount === 0);
+										if (nextUnrecordedEpisode) {
+											setSelectedEpisodeId(nextUnrecordedEpisode.id);
+										}
 										void mutateWork();
 									} catch (error) {
 										setErrorMessage(getErrorMessage(error));

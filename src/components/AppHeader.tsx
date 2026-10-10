@@ -11,6 +11,12 @@ import useSWR from "swr";
 import { searchWorksByTitle } from "../lib/annict";
 import { getErrorMessage } from "../lib/errors";
 import { SEARCH_TERM_EVENT_NAME } from "../shared/search";
+import {
+	readWorkHistory,
+	recordVisitedWork,
+	WORK_HISTORY_EVENT_NAME,
+	type WorkHistoryEntry,
+} from "../shared/workHistory";
 import { useAnnictSession } from "./AnnictSessionProvider";
 
 function GlobalSearch() {
@@ -18,6 +24,8 @@ function GlobalSearch() {
 	const { accessToken, isLoading } = useAnnictSession();
 	const [term, setTerm] = useState("");
 	const [isMenuVisible, setIsMenuVisible] = useState(false);
+	const [workHistory, setWorkHistory] =
+		useState<WorkHistoryEntry[]>(readWorkHistory);
 	const deferredTerm = useDeferredValue(term.trim());
 	const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(deferredTerm);
 
@@ -47,15 +55,32 @@ function GlobalSearch() {
 	);
 
 	const searchError = searchErrorRaw ? getErrorMessage(searchErrorRaw) : null;
-	const searchResults = works ?? [];
+	const searchResults = [...(works ?? [])].sort(
+		(left, right) => left.annictId - right.annictId,
+	);
+	const inputRef = useRef<HTMLInputElement | null>(null);
+	const searchRef = useRef<HTMLDivElement | null>(null);
 
 	useEffect(() => {
-		if (searchResults.length > 0) {
+		if (
+			searchResults.length > 0 &&
+			document.activeElement === inputRef.current
+		) {
 			setIsMenuVisible(true);
 		}
 	}, [searchResults]);
-	const inputRef = useRef<HTMLInputElement | null>(null);
-	const searchRef = useRef<HTMLDivElement | null>(null);
+
+	useEffect(() => {
+		const syncWorkHistory = () => setWorkHistory(readWorkHistory());
+
+		window.addEventListener(WORK_HISTORY_EVENT_NAME, syncWorkHistory);
+		window.addEventListener("storage", syncWorkHistory);
+
+		return () => {
+			window.removeEventListener(WORK_HISTORY_EVENT_NAME, syncWorkHistory);
+			window.removeEventListener("storage", syncWorkHistory);
+		};
+	}, []);
 
 	useEffect(() => {
 		const closeMenu = (event: MouseEvent | TouchEvent) => {
@@ -82,14 +107,20 @@ function GlobalSearch() {
 
 	useEffect(() => {
 		const syncSearchTerm = (event: Event) => {
-			const customEvent = event as CustomEvent<{ term?: string }>;
+			const customEvent = event as CustomEvent<{
+				focus?: boolean;
+				openMenu?: boolean;
+				term?: string;
+			}>;
 			const nextTerm = customEvent.detail?.term?.trim() ?? "";
 			setTerm(nextTerm);
-			setIsMenuVisible(true);
+			setIsMenuVisible(customEvent.detail?.openMenu ?? true);
 
-			window.requestAnimationFrame(() => {
-				inputRef.current?.focus();
-			});
+			if (customEvent.detail?.focus ?? true) {
+				window.requestAnimationFrame(() => {
+					inputRef.current?.focus({ preventScroll: true });
+				});
+			}
 		};
 
 		window.addEventListener(SEARCH_TERM_EVENT_NAME, syncSearchTerm);
@@ -99,7 +130,13 @@ function GlobalSearch() {
 		};
 	}, []);
 
-	const moveToWork = (annictId: number) => {
+	const moveToWork = (annictId: number, work?: WorkHistoryEntry) => {
+		const visitedWork =
+			work ?? workHistory.find((entry) => entry.annictId === annictId);
+		if (visitedWork) {
+			setWorkHistory(recordVisitedWork(visitedWork));
+		}
+
 		setIsMenuVisible(false);
 		setTerm("");
 		startTransition(() => {
@@ -121,25 +158,56 @@ function GlobalSearch() {
 					}
 
 					if (searchResults[0]) {
-						moveToWork(searchResults[0].annictId);
+						moveToWork(searchResults[0].annictId, searchResults[0]);
 					}
 				}}
 			>
-				<input
-					aria-label="Annict作品検索"
-					autoComplete="off"
-					className="block w-full rounded-xl border border-gray-700 bg-gray-950 px-4 py-3 text-gray-100 outline-none transition placeholder:text-gray-500 focus:border-[#FF8B46] disabled:cursor-not-allowed disabled:opacity-50"
-					disabled={isDisabled}
-					ref={inputRef}
-					onChange={(event) => setTerm(event.target.value)}
-					onClick={() => setIsMenuVisible(true)}
-					onFocus={() => setIsMenuVisible(true)}
-					placeholder={"検索"}
-					value={term}
-				/>
+				<div className="relative min-w-0 flex-1">
+					<input
+						aria-label="Annict作品検索"
+						autoComplete="off"
+						className="block w-full rounded-xl border border-gray-700 bg-gray-950 px-4 py-3 pr-11 text-gray-100 outline-none transition placeholder:text-gray-500 focus:border-[#FF8B46] disabled:cursor-not-allowed disabled:opacity-50"
+						disabled={isDisabled}
+						ref={inputRef}
+						onChange={(event) => setTerm(event.target.value)}
+						onClick={() => setIsMenuVisible(true)}
+						onFocus={() => {
+							setWorkHistory(readWorkHistory());
+							setIsMenuVisible(true);
+						}}
+						placeholder={"検索"}
+						value={term}
+					/>
+					{term.length > 0 ? (
+						<button
+							aria-label="検索語をクリア"
+							className="absolute right-2 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-full text-gray-400 transition hover:bg-gray-800 hover:text-gray-100"
+							onClick={() => {
+								setTerm("");
+								setIsMenuVisible(true);
+								inputRef.current?.focus({ preventScroll: true });
+							}}
+							type="button"
+						>
+							<svg
+								aria-hidden="true"
+								className="size-4"
+								fill="none"
+								viewBox="0 0 24 24"
+							>
+								<path
+									d="m6 6 12 12M18 6 6 18"
+									stroke="currentColor"
+									strokeLinecap="round"
+									strokeWidth="2"
+								/>
+							</svg>
+						</button>
+					) : null}
+				</div>
 			</form>
 			<div
-				className={`absolute inset-x-0 top-full z-30 mt-2 overflow-hidden rounded-2xl border border-gray-700 bg-gray-800 shadow-2xl transition-all duration-150 ${
+				className={`absolute inset-x-0 top-full z-30 mt-2 max-h-[70vh] overflow-y-auto rounded-2xl border border-gray-700 bg-gray-800 shadow-2xl transition-all duration-150 ${
 					isMenuVisible
 						? "pointer-events-auto translate-y-0 opacity-100"
 						: "pointer-events-none -translate-y-1.5 opacity-0"
@@ -158,22 +226,52 @@ function GlobalSearch() {
 					<p className="w-full px-4 py-3 text-left text-sm text-[#ffc29d]">
 						{searchError}
 					</p>
+				) : term.trim().length === 0 ? (
+					<div className="opacity-80">
+						<p className="border-b border-gray-700 px-4 py-2 text-xs font-semibold text-gray-400">
+							閲覧履歴
+						</p>
+						{workHistory.length > 0 ? (
+							workHistory.map((work) => (
+								<button
+									className="flex w-full items-center justify-between gap-3 border-b border-gray-700 bg-transparent px-4 py-3 text-left text-sm text-gray-100 transition hover:bg-gray-700 last:border-b-0 max-[720px]:flex-col max-[720px]:items-stretch"
+									key={work.annictId}
+									onClick={() => moveToWork(work.annictId, work)}
+									type="button"
+								>
+									<span className="font-medium text-gray-50">{work.title}</span>
+									<span className="text-sm text-gray-400">
+										#{work.annictId}
+									</span>
+								</button>
+							))
+						) : (
+							<p className="w-full px-4 py-3 text-left text-sm text-gray-400">
+								閲覧した作品はまだありません。
+							</p>
+						)}
+					</div>
 				) : deferredTerm.length < 2 ? (
 					<p className="w-full px-4 py-3 text-left text-sm text-gray-400">
 						2文字以上入力すると候補を表示します。
 					</p>
 				) : searchResults.length > 0 ? (
-					searchResults.map((work) => (
-						<button
-							className="flex w-full items-center justify-between gap-3 border-b border-gray-700 bg-transparent px-4 py-3 text-left text-sm text-gray-100 transition hover:bg-gray-700 last:border-b-0 max-[720px]:flex-col max-[720px]:items-stretch"
-							key={work.annictId}
-							onClick={() => moveToWork(work.annictId)}
-							type="button"
-						>
-							<span className="font-medium text-gray-50">{work.title}</span>
-							<span className="text-sm text-gray-400">#{work.annictId}</span>
-						</button>
-					))
+					<div>
+						<p className="border-b border-gray-700 px-4 py-2 text-xs font-semibold text-gray-400">
+							検索結果
+						</p>
+						{searchResults.map((work) => (
+							<button
+								className="flex w-full items-center justify-between gap-3 border-b border-gray-700 bg-transparent px-4 py-3 text-left text-sm text-gray-100 transition hover:bg-gray-700 last:border-b-0 max-[720px]:flex-col max-[720px]:items-stretch"
+								key={work.annictId}
+								onClick={() => moveToWork(work.annictId, work)}
+								type="button"
+							>
+								<span className="font-medium text-gray-50">{work.title}</span>
+								<span className="text-sm text-gray-400">#{work.annictId}</span>
+							</button>
+						))}
+					</div>
 				) : (
 					<p className="w-full px-4 py-3 text-left text-sm text-gray-400">
 						一致する作品が見つかりませんでした。
@@ -284,6 +382,30 @@ function AnnictAccountControl() {
 					</p>
 				</div>
 				<div className="mt-3 flex flex-col gap-3">
+					<button
+						className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full border border-[#FF8B46]/40 bg-[#FF8B46]/10 px-5 py-3 text-sm font-semibold text-gray-100 transition hover:bg-[#FF8B46]/20"
+						onClick={() => {
+							setIsMenuOpen(false);
+							window.location.reload();
+						}}
+						type="button"
+					>
+						<svg
+							aria-hidden="true"
+							className="size-4"
+							fill="none"
+							viewBox="0 0 24 24"
+						>
+							<path
+								d="M20 11a8 8 0 0 0-14.9-4M4 4v4h4m-4 5a8 8 0 0 0 14.9 4M20 20v-4h-4"
+								stroke="currentColor"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth="1.8"
+							/>
+						</svg>
+						アプリを再読み込み
+					</button>
 					<button
 						className="inline-flex min-h-12 w-full items-center justify-center rounded-full border border-gray-700 bg-gray-800 px-5 py-3 text-sm font-semibold text-gray-100 transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
 						onClick={() => {

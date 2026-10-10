@@ -285,6 +285,30 @@ function AnnictAccountControl() {
 				</div>
 				<div className="mt-3 flex flex-col gap-3">
 					<button
+						className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full border border-[#FF8B46]/40 bg-[#FF8B46]/10 px-5 py-3 text-sm font-semibold text-gray-100 transition hover:bg-[#FF8B46]/20"
+						onClick={() => {
+							setIsMenuOpen(false);
+							window.location.reload();
+						}}
+						type="button"
+					>
+						<svg
+							aria-hidden="true"
+							className="size-4"
+							fill="none"
+							viewBox="0 0 24 24"
+						>
+							<path
+								d="M20 11a8 8 0 0 0-14.9-4M4 4v4h4m-4 5a8 8 0 0 0 14.9 4M20 20v-4h-4"
+								stroke="currentColor"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth="1.8"
+							/>
+						</svg>
+						アプリを再読み込み
+					</button>
+					<button
 						className="inline-flex min-h-12 w-full items-center justify-center rounded-full border border-gray-700 bg-gray-800 px-5 py-3 text-sm font-semibold text-gray-100 transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
 						onClick={() => {
 							setIsMenuOpen(false);

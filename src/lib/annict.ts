@@ -75,6 +75,7 @@ export type AnnictWork = {
 	imageUrl: string | null;
 	media: string | null;
 	officialSiteUrl: string | null;
+	syobocalTid: number | null;
 	seasonName: AnnictSeasonName | null;
 	seasonYear: number | null;
 	seriesList: string[];
@@ -191,6 +192,33 @@ const requestAnnictRest = async <TData>(
 	return (await response.json()) as TData;
 };
 
+const fetchSyobocalTidByAnnictId = async (
+	accessToken: string,
+	annictId: number,
+) => {
+	try {
+		const payload = await requestAnnictRest<{
+			works: Array<{ id: number; syobocal_tid: number | string | null }>;
+		}>(
+			accessToken,
+			"/v1/works",
+			new URLSearchParams([
+				["fields", "id,syobocal_tid"],
+				["filter_ids", String(annictId)],
+				["per_page", "1"],
+			]),
+		);
+		const value = payload.works.find(
+			(work) => work.id === annictId,
+		)?.syobocal_tid;
+		const tid = typeof value === "number" ? value : Number(value);
+
+		return Number.isSafeInteger(tid) && tid > 0 ? tid : null;
+	} catch {
+		return null;
+	}
+};
+
 export const buildAnnictAuthorizationUrl = () => {
 	const clientId = import.meta.env.VITE_ANNICT_CLIENT_ID?.trim();
 	if (!clientId || typeof window === "undefined") {
@@ -272,6 +300,7 @@ export const fetchWorkByAnnictId = async (
 	accessToken: string,
 	annictId: number,
 ) => {
+	const syobocalTidPromise = fetchSyobocalTidByAnnictId(accessToken, annictId);
 	const data = await requestAnnictGraphQL<{
 		searchWorks: {
 			nodes: Array<
@@ -368,6 +397,7 @@ export const fetchWorkByAnnictId = async (
 		imageUrl: normalizeOptionalString(work.image?.recommendedImageUrl),
 		media: work.media ?? null,
 		officialSiteUrl: work.officialSiteUrl ?? null,
+		syobocalTid: await syobocalTidPromise,
 		seasonName: work.seasonName ?? null,
 		seasonYear: work.seasonYear ?? null,
 		seriesList: compact(work.seriesList?.nodes)

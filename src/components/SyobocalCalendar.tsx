@@ -155,6 +155,8 @@ const formatClockFromDate = (value: Date) =>
 const formatClock = (value: string) =>
 	formatClockFromDate(parseSyobocalDateTime(value));
 
+const formatMinute = (value: string) => formatClock(value).slice(3, 5);
+
 const formatTimelineMarker = (
 	value: Date,
 ): Pick<TimelineMarker, "label" | "tone"> => {
@@ -175,6 +177,23 @@ const getRecentFirstBroadcastCutoff = (businessDate: string) => {
 
 const diffMinutes = (startAt: Date, endAt: Date) =>
 	Math.round((endAt.getTime() - startAt.getTime()) / 60_000);
+
+const getProgramDurationMinutes = (item: SyobocalScheduleItem) =>
+	diffMinutes(
+		parseSyobocalDateTime(item.startAt),
+		parseSyobocalDateTime(item.endAt),
+	);
+
+const formatDuration = (durationMinutes: number) => {
+	const hours = Math.floor(durationMinutes / 60);
+	const minutes = durationMinutes % 60;
+
+	if (hours === 0) {
+		return `${minutes}分`;
+	}
+
+	return minutes === 0 ? `${hours}時間` : `${hours}時間${minutes}分`;
+};
 
 const buildProgramSummary = (item: SyobocalScheduleItem) => {
 	const parts: string[] = [];
@@ -457,8 +476,10 @@ function ScheduleCard({
 			? { ...baseSurfaceStyle, borderColor: "#38bdf8" }
 			: baseSurfaceStyle;
 	const bgColor = surfaceStyle.backgroundColor;
+	const durationMinutes = getProgramDurationMinutes(item);
+	const durationLabel = `(${formatDuration(durationMinutes)})`;
 	const accessibleLabel = [
-		`${formatClock(item.startAt)} - ${formatClock(item.endAt)}`,
+		`${formatClock(item.startAt)} - ${formatClock(item.endAt)} ${durationLabel}`,
 		item.title,
 		item.channelName,
 		isWatching ? "視聴中" : null,
@@ -492,22 +513,10 @@ function ScheduleCard({
 			type="button"
 		>
 			{!isVeryCompact ? (
-				<div className="flex items-center justify-between gap-1 whitespace-nowrap text-[9px] font-semibold leading-[9px] text-gray-700">
-					<p className="text-ellipsis ellipsis whitespace-nowrap">
-						{formatClock(item.startAt)} - {formatClock(item.endAt)}
+				<div className="overflow-hidden whitespace-nowrap text-[9px] font-semibold leading-[9px] text-gray-700">
+					<p className="overflow-hidden text-ellipsis whitespace-nowrap">
+						{formatMinute(item.startAt)} {durationLabel}
 					</p>
-					{isWatching ? (
-						isCompact ? (
-							<span
-								aria-hidden="true"
-								className="size-1.5 shrink-0 rounded-full bg-[#FF8B46]"
-							/>
-						) : (
-							<span className="rounded bg-[#FF8B46] px-1 py-0.5 text-[8px] leading-none text-white">
-								視聴中
-							</span>
-						)
-					) : null}
 				</div>
 			) : null}
 			<div className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] font-semibold leading-[11px] text-gray-950">
@@ -564,7 +573,8 @@ function ProgramActionModal({
 							{item.shortTitle ?? item.title}
 						</p>
 						<p className="mt-1 break-words text-sm text-gray-400">
-							{formatClock(item.startAt)} - {formatClock(item.endAt)} /{" "}
+							{formatClock(item.startAt)} - {formatClock(item.endAt)} (
+							{formatDuration(getProgramDurationMinutes(item))}) /{" "}
 							{item.channelName}
 						</p>
 					</div>

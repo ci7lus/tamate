@@ -9,7 +9,9 @@ import {
 	fetchWatchingWorks,
 	searchWorksByTitle,
 } from "../lib/annict";
+import { serializeCalendarPlaceholderShape } from "../lib/calendarPlaceholder";
 import { getErrorMessage } from "../lib/errors";
+import { writeStorage } from "../lib/storage";
 import {
 	fetchSyobocalSchedule,
 	getInitialSyobocalDate,
@@ -17,12 +19,14 @@ import {
 	type SyobocalScheduleItem,
 	shiftSyobocalDate,
 } from "../lib/syobocal";
+import { CALENDAR_TIME_RAIL_WIDTH, STORAGE_KEYS } from "../shared/constants";
 import { requestSearchTerm } from "../shared/search";
 import { useAnnictSession } from "./AnnictSessionProvider";
+import { CalendarPlaceholder } from "./CalendarPlaceholder";
 
-const HOUR_HEIGHT = 112;
-const MIN_EMPTY_HOUR_HEIGHT = HOUR_HEIGHT * 0.5;
-const TIME_RAIL_WIDTH = 72;
+const HOUR_HEIGHT = 144;
+const MIN_EMPTY_HOUR_HEIGHT = HOUR_HEIGHT * 0.25;
+const HALF_HOUR_MS = 30 * 60_000;
 
 type TimedScheduleItem = {
 	endAt: Date;
@@ -47,9 +51,9 @@ type TimelineLayoutItem = {
 };
 
 type TimelineMarker = {
-	label: string;
+	label: string | null;
 	top: number;
-	tone: "start";
+	tone: "hour" | "halfHour";
 };
 
 type ProgramActionModalState = {
@@ -151,6 +155,18 @@ const formatClockFromDate = (value: Date) =>
 const formatClock = (value: string) =>
 	formatClockFromDate(parseSyobocalDateTime(value));
 
+const formatTimelineMarker = (
+	value: Date,
+): Pick<TimelineMarker, "label" | "tone"> => {
+	const clock = formatClockFromDate(value);
+	const minute = clock.slice(3, 5);
+	const isHalfHour = minute === "30";
+	return {
+		label: isHalfHour ? null : String(Number(clock.slice(0, 2))),
+		tone: isHalfHour ? "halfHour" : "hour",
+	};
+};
+
 const getRecentFirstBroadcastCutoff = (businessDate: string) => {
 	const cutoff = parseSyobocalDateTime(`${businessDate} 00:00:00`);
 	cutoff.setMonth(cutoff.getMonth() - RECENT_FIRST_BROADCAST_MONTHS);
@@ -181,21 +197,6 @@ const buildProgramSummary = (item: SyobocalScheduleItem) => {
 const isFirstRunBatch = (item: SyobocalScheduleItem) =>
 	item.comment?.includes("初回") === true ||
 	item.subtitle?.includes("初回") === true;
-
-const getPreferredCardHeight = (item: SyobocalScheduleItem) => {
-	const summary = buildProgramSummary(item);
-	const title = item.shortTitle ?? item.title;
-	const titleLines = Math.max(1, Math.ceil(title.length / 13));
-	const channelLines = Math.max(1, Math.ceil(item.channelName.length / 18));
-	const summaryLines = summary
-		? Math.max(1, Math.ceil(summary.length / 18))
-		: 0;
-
-	return Math.min(
-		196,
-		52 + titleLines * 24 + channelLines * 18 + summaryLines * 16,
-	);
-};
 
 const getCategorySurfaceStyle = (category: number) => {
 	switch (category) {
@@ -357,54 +358,21 @@ const buildTimelineLayout = (
 			};
 		});
 
-		const clusterDurationMinutes = Math.max(
-			diffMinutes(clusterStart, clusterEnd),
-			15,
-		);
-		const pixelsPerHour = Math.max(
-			30,
-			...assignments.map((assignment) => {
-				const itemDurationMinutes = Math.max(
-					diffMinutes(
-						assignment.timelineItem.startAt,
-						assignment.timelineItem.endAt,
-					),
-					5,
-				);
-				const baseCardHeight = Math.max(
-					(itemDurationMinutes / 60) * HOUR_HEIGHT - 8,
-					24,
-				);
-
-				return (
-					(getPreferredCardHeight(assignment.timelineItem.item) /
-						baseCardHeight) *
-					HOUR_HEIGHT
-				);
-			}),
-		);
-		const clusterHeight = Math.max(
-			(clusterDurationMinutes / 60) * pixelsPerHour,
-			64,
-		);
+		const pixelsPerHour = HOUR_HEIGHT;
+		const clusterHeight =
+			(diffMinutes(clusterStart, clusterEnd) / 60) * pixelsPerHour;
 		const columnCount = Math.max(columnEnds.length, 1);
 
 		for (const assignment of assignments) {
-			const itemDurationMinutes = Math.max(
-				diffMinutes(
-					assignment.timelineItem.startAt,
-					assignment.timelineItem.endAt,
-				),
-				5,
+			const itemDurationMinutes = diffMinutes(
+				assignment.timelineItem.startAt,
+				assignment.timelineItem.endAt,
 			);
 
 			positionedItems.push({
 				columnCount,
 				columnIndex: assignment.columnIndex,
-				height: Math.max(
-					(itemDurationMinutes / 60) * pixelsPerHour,
-					getPreferredCardHeight(assignment.timelineItem.item),
-				),
+				height: (itemDurationMinutes / 60) * pixelsPerHour,
 				item: assignment.timelineItem.item,
 				top:
 					top +
@@ -434,24 +402,25 @@ const buildTimelineLayout = (
 	if (firstProgramStart && positionedClusters.length > 0) {
 		const lastClusterEnd =
 			positionedClusters[positionedClusters.length - 1].endAt;
-		let currentTime = new Date(firstProgramStart);
+		let currentTime = new Date(
+			Math.ceil(firstProgramStart.getTime() / HALF_HOUR_MS) * HALF_HOUR_MS,
+		);
 		while (currentTime <= lastClusterEnd) {
 			for (const cluster of positionedClusters) {
 				if (currentTime >= cluster.startAt && currentTime <= cluster.endAt) {
+					const markerTop =
+						cluster.top +
+						(diffMinutes(cluster.startAt, currentTime) / 60) *
+							cluster.pixelsPerHour;
 					markers.push({
-						label: formatClockFromDate(currentTime),
-						tone: "start",
-						top: Math.max(
-							8,
-							cluster.top +
-								(diffMinutes(cluster.startAt, currentTime) / 60) *
-									cluster.pixelsPerHour,
-						),
+						...formatTimelineMarker(currentTime),
+						top: markerTop,
 					});
 					break;
 				}
 			}
-			currentTime = new Date(currentTime.getTime() + 30 * 60_000);
+
+			currentTime = new Date(currentTime.getTime() + HALF_HOUR_MS);
 		}
 	}
 
@@ -467,44 +436,6 @@ const buildTimelineLayout = (
 	};
 };
 
-function ScheduleSkeleton() {
-	return (
-		<div
-			className="flex overflow-hidden rounded-3xl border border-gray-800 bg-gray-950/80"
-			style={{ height: "100vh" }}
-		>
-			<div
-				className="shrink-0 border-r border-gray-800 px-2 py-3"
-				style={{ width: TIME_RAIL_WIDTH }}
-			>
-				<div className="space-y-20">
-					{[...Array(16)].map((i) => (
-						<div
-							className="h-3 animate-pulse rounded bg-gray-800"
-							key={i}
-							style={{ width: `${40 + (i % 3) * 15}%` }}
-						/>
-					))}
-				</div>
-			</div>
-			<div className="flex-1 p-2">
-				<div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-					{[
-						100, 80, 120, 90, 110, 70, 130, 85, 105, 95, 75, 115, 100, 80, 120,
-						90, 110, 70, 130, 85, 105, 95, 75, 115, 100, 80, 120, 90, 110, 70,
-					].map((h) => (
-						<div
-							className="animate-pulse rounded-2xl bg-gray-800"
-							key={h}
-							style={{ height: `${h}px` }}
-						/>
-					))}
-				</div>
-			</div>
-		</div>
-	);
-}
-
 function ScheduleCard({
 	isWatching,
 	item,
@@ -517,14 +448,23 @@ function ScheduleCard({
 	position: TimelineLayoutItem;
 }) {
 	const [isHovered, setIsHovered] = useState(false);
+	const isCompact = position.height < 56;
+	const isVeryCompact = position.height < 22;
 	const left = `${(position.columnIndex / position.columnCount) * 100}%`;
 	const baseSurfaceStyle = getCategorySurfaceStyle(item.category);
-	const surfaceStyle = isWatching
-		? { ...baseSurfaceStyle, borderColor: "#fb923c" }
-		: item.warn > 0
+	const surfaceStyle =
+		item.warn > 0
 			? { ...baseSurfaceStyle, borderColor: "#38bdf8" }
 			: baseSurfaceStyle;
 	const bgColor = surfaceStyle.backgroundColor;
+	const accessibleLabel = [
+		`${formatClock(item.startAt)} - ${formatClock(item.endAt)}`,
+		item.title,
+		item.channelName,
+		isWatching ? "視聴中" : null,
+	]
+		.filter((value): value is string => value !== null)
+		.join(" / ");
 	const hoverBgColor = (() => {
 		const r = parseInt(bgColor.slice(1, 3), 16);
 		const g = parseInt(bgColor.slice(3, 5), 16);
@@ -534,39 +474,55 @@ function ScheduleCard({
 
 	return (
 		<button
-			className="absolute z-0 overflow-hidden rounded-2xl border p-2 text-left transition"
+			aria-label={accessibleLabel}
+			className="absolute z-0 overflow-hidden rounded-sm border p-0.5 text-left transition"
 			onClick={onOpenDetails}
 			onMouseEnter={() => setIsHovered(true)}
 			onMouseLeave={() => setIsHovered(false)}
+			title={accessibleLabel}
 			style={{
 				height: position.height,
 				left,
 				top: position.top,
 				width: `${100 / position.columnCount}%`,
 				...surfaceStyle,
+				borderLeft: isWatching ? "3px solid #fb923c" : undefined,
 				backgroundColor: isHovered ? hoverBgColor : bgColor,
 			}}
 			type="button"
 		>
-			<div className="flex items-end justify-between gap-2 text-[11px] font-semibold text-gray-700">
-				<p className="text-ellipsis ellipsis whitespace-nowrap">
-					{formatClock(item.startAt)} - {formatClock(item.endAt)}
-				</p>
-				{isWatching ? (
-					<span className="rounded-full bg-[#FF8B46] p-2 text-[10px] text-white overflow-hidden text-ellipsis ellipsis whitespace-nowrap">
-						視聴中
-					</span>
-				) : null}
-			</div>
-			<div className="mt-2 overflow-hidden text-[16px] font-semibold leading-[1.15] text-gray-950">
+			{!isVeryCompact ? (
+				<div className="flex items-center justify-between gap-1 whitespace-nowrap text-[9px] font-semibold leading-[9px] text-gray-700">
+					<p className="text-ellipsis ellipsis whitespace-nowrap">
+						{formatClock(item.startAt)} - {formatClock(item.endAt)}
+					</p>
+					{isWatching ? (
+						isCompact ? (
+							<span
+								aria-hidden="true"
+								className="size-1.5 shrink-0 rounded-full bg-[#FF8B46]"
+							/>
+						) : (
+							<span className="rounded bg-[#FF8B46] px-1 py-0.5 text-[8px] leading-none text-white">
+								視聴中
+							</span>
+						)
+					) : null}
+				</div>
+			) : null}
+			<div className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] font-semibold leading-[11px] text-gray-950">
 				{item.shortTitle ?? item.title}
 			</div>
-			<div className="mt-2 overflow-hidden text-[13px] leading-tight text-sky-700">
-				{item.channelName}
-			</div>
-			<div className="mt-2 overflow-hidden text-[12px] leading-tight text-gray-600">
-				{buildProgramSummary(item)}
-			</div>
+			{!isVeryCompact ? (
+				<div className="overflow-hidden text-ellipsis whitespace-nowrap text-[8px] leading-[9px] text-sky-700">
+					{item.channelName}
+				</div>
+			) : null}
+			{!isCompact ? (
+				<div className="line-clamp-1 overflow-hidden text-[9px] leading-[10px] text-gray-600">
+					{buildProgramSummary(item)}
+				</div>
+			) : null}
 		</button>
 	);
 }
@@ -600,20 +556,20 @@ function ProgramActionModal({
 				type="button"
 			/>
 			<div
-				className={`relative z-10 w-full max-w-lg rounded-3xl border border-gray-700 bg-gray-900 p-4 text-gray-100 shadow-2xl transition-all duration-200 ease-out ${entered ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"}`}
+				className={`relative z-10 max-h-[calc(100dvh_-_1.5rem)] w-full max-w-lg overflow-x-hidden overflow-y-auto overscroll-contain rounded-3xl border border-gray-700 bg-gray-900 p-4 text-gray-100 shadow-2xl transition-all duration-200 ease-out ${entered ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"}`}
 			>
 				<div className="flex items-start justify-between gap-3">
-					<div>
-						<p className="text-lg font-semibold leading-tight">
+					<div className="min-w-0 flex-1">
+						<p className="break-words text-lg font-semibold leading-tight">
 							{item.shortTitle ?? item.title}
 						</p>
-						<p className="mt-1 text-sm text-gray-400">
+						<p className="mt-1 break-words text-sm text-gray-400">
 							{formatClock(item.startAt)} - {formatClock(item.endAt)} /{" "}
 							{item.channelName}
 						</p>
 					</div>
 					<button
-						className="inline-flex min-h-10 items-center justify-center rounded-full border border-gray-700 bg-gray-800 px-3 text-sm text-gray-200 transition hover:bg-gray-700"
+						className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-full border border-gray-700 bg-gray-800 px-3 text-sm text-gray-200 transition hover:bg-gray-700"
 						onClick={onClose}
 						type="button"
 					>
@@ -621,7 +577,7 @@ function ProgramActionModal({
 					</button>
 				</div>
 
-				<div className="mt-3 rounded-2xl border border-gray-800 bg-gray-950/60 p-3 text-sm text-gray-300 whitespace-pre-line">
+				<div className="mt-3 min-w-0 break-words rounded-2xl border border-gray-800 bg-gray-950/60 p-3 text-sm whitespace-pre-line text-gray-300">
 					<Interweave
 						content={buildProgramSummary(item)}
 						matchers={[
@@ -831,7 +787,19 @@ export function SyobocalCalendar() {
 		schedule?.rangeStartAt,
 		schedule?.rangeEndAt,
 	);
+	const calendarShapeStorageValue = schedule
+		? serializeCalendarPlaceholderShape(timelineLayout)
+		: null;
 	const isCurrentDisplayDate = displayDate === getInitialSyobocalDate();
+
+	useEffect(() => {
+		if (calendarShapeStorageValue) {
+			writeStorage(
+				STORAGE_KEYS.calendarPlaceholderShape,
+				calendarShapeStorageValue,
+			);
+		}
+	}, [calendarShapeStorageValue]);
 
 	useEffect(() => {
 		const today = getInitialSyobocalDate();
@@ -1190,7 +1158,7 @@ export function SyobocalCalendar() {
 					</div>
 
 					<div className="mt-4">
-						{isScheduleLoading && !schedule ? <ScheduleSkeleton /> : null}
+						{isScheduleLoading && !schedule ? <CalendarPlaceholder /> : null}
 						{scheduleError ? (
 							<div className="grid min-h-60 place-items-center rounded-3xl border border-dashed border-[#FF8B46]/40 bg-[#FF8B46]/8 p-6 text-center">
 								<div className="max-w-lg space-y-3">
@@ -1218,23 +1186,56 @@ export function SyobocalCalendar() {
 								>
 									<div
 										className="absolute left-0 top-0 z-20 h-full border-r border-gray-800 bg-gray-950/95 backdrop-blur"
-										style={{ width: TIME_RAIL_WIDTH }}
+										style={{ width: CALENDAR_TIME_RAIL_WIDTH }}
 									>
 										{timelineLayout.markers.map((marker) => (
 											<div
-												className="absolute left-0 right-0 -translate-y-1/2 px-2 text-xs font-semibold text-[#FF8B46]"
-												key={`${marker.label}-${marker.top}`}
-												style={{ top: marker.top }}
-											>
-												{marker.label}
-											</div>
+												aria-hidden="true"
+												className="pointer-events-none absolute left-0 right-0 border-t border-gray-600"
+												key={`rail-guide-${marker.tone}-${marker.top}`}
+												style={{
+													top: marker.top,
+													opacity: marker.tone === "halfHour" ? 0.65 : 0.9,
+												}}
+											/>
 										))}
+										{timelineLayout.markers.map((marker) =>
+											marker.label === null ? null : (
+												<div
+													className="absolute left-0 right-0 px-1 text-right text-[10px] font-semibold text-[#FF8B46]"
+													key={`${marker.label}-${marker.top}`}
+													style={{
+														top: marker.top < 12 ? 12 : marker.top,
+														transform:
+															marker.top < 12
+																? "translateY(0)"
+																: "translateY(-50%)",
+													}}
+												>
+													<span className="bg-gray-950 px-0.5">
+														{marker.label}
+													</span>
+												</div>
+											),
+										)}
 									</div>
 
 									<div
 										className="absolute inset-y-0 right-0"
-										style={{ left: TIME_RAIL_WIDTH }}
+										style={{ left: CALENDAR_TIME_RAIL_WIDTH }}
 									>
+										{timelineLayout.markers.map((marker) => (
+											<div
+												aria-hidden="true"
+												className="pointer-events-none absolute left-0 right-0 border-t border-gray-600"
+												key={`guide-${marker.label}-${marker.top}`}
+												style={{
+													top: marker.top,
+													opacity: marker.tone === "halfHour" ? 0.65 : 0.9,
+												}}
+											/>
+										))}
+
 										{nowTop != null ? (
 											<div
 												className="absolute left-0 right-0 z-30 border-t-2 border-red-500"

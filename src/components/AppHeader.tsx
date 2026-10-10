@@ -88,7 +88,7 @@ function GlobalSearch() {
 			setIsMenuVisible(true);
 
 			window.requestAnimationFrame(() => {
-				inputRef.current?.focus();
+				inputRef.current?.focus({ preventScroll: true });
 			});
 		};
 

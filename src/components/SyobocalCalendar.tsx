@@ -902,10 +902,6 @@ export function SyobocalCalendar() {
 		}
 
 		requestSearchTerm(trimmedTerm);
-		window.scrollTo({
-			behavior: "smooth",
-			top: 0,
-		});
 	};
 
 	const toggleCategory = (value: number) => {

@@ -20,10 +20,15 @@ import {
 	type SyobocalScheduleItem,
 	shiftSyobocalDate,
 } from "../lib/syobocal";
+import {
+	readWatchingWorksPlaceholderCounts,
+	serializeWatchingWorksPlaceholderCounts,
+} from "../lib/watchingWorksPlaceholder";
 import { CALENDAR_TIME_RAIL_WIDTH, STORAGE_KEYS } from "../shared/constants";
 import { requestSearchTerm } from "../shared/search";
 import { useAnnictSession } from "./AnnictSessionProvider";
 import { CalendarPlaceholder } from "./CalendarPlaceholder";
+import { WatchingWorksPlaceholder } from "./WatchingWorksPlaceholder";
 
 const HOUR_HEIGHT = 144;
 const MIN_EMPTY_HOUR_HEIGHT = HOUR_HEIGHT * 0.25;
@@ -762,6 +767,9 @@ export function SyobocalCalendar() {
 	const location = useLocation();
 	const navigate = useNavigate();
 	const { accessToken, isLoading, login } = useAnnictSession();
+	const [watchingPlaceholderCounts] = useState(
+		readWatchingWorksPlaceholderCounts,
+	);
 	const todayDate = getInitialSyobocalDate();
 	const [displayDate, setDisplayDate] = useState(() => {
 		const hashValue = location.hash.replace(/^#/, "").trim();
@@ -800,6 +808,7 @@ export function SyobocalCalendar() {
 		accessToken ? ["annict-watching-v2", accessToken] : null,
 		([, token]) => fetchWatchingWorks(token),
 		{
+			revalidateOnMount: true,
 			revalidateIfStale: false,
 			revalidateOnFocus: false,
 			revalidateOnReconnect: false,
@@ -825,6 +834,7 @@ export function SyobocalCalendar() {
 				ids.split(",").map((id) => Number.parseInt(id, 10)),
 			),
 		{
+			revalidateOnMount: true,
 			revalidateIfStale: false,
 			revalidateOnFocus: false,
 			revalidateOnReconnect: false,
@@ -1043,11 +1053,30 @@ export function SyobocalCalendar() {
 				!displayScheduleWatchingTitleIds.has(work.syobocalTid),
 		)
 		.sort(compareWatchingWorksByBroadcastDate);
-	const isWatchingWidgetLoading =
-		isWatchingLoading ||
-		isLoading ||
-		isScheduleLoading ||
-		isWatchingProgressLoading;
+	const watchingPlaceholderCountsToStore =
+		accessToken &&
+		watchingWorksRaw !== undefined &&
+		!isWatchingLoading &&
+		!isScheduleLoading
+			? serializeWatchingWorksPlaceholderCounts({
+					inSchedule: displayScheduleWatchingPrograms.length,
+					outOfSchedule: otherWatchingWorks.length,
+				})
+			: null;
+	useEffect(() => {
+		if (watchingPlaceholderCountsToStore) {
+			writeStorage(
+				STORAGE_KEYS.watchingWorksPlaceholderCounts,
+				watchingPlaceholderCountsToStore,
+			);
+		}
+	}, [watchingPlaceholderCountsToStore]);
+	const shouldShowWatchingPlaceholder =
+		watchingWorksRaw === undefined &&
+		(isWatchingLoading ||
+			isLoading ||
+			isScheduleLoading ||
+			isWatchingProgressLoading);
 	const openWatchingWork = (work: AnnictWatchingWork) => {
 		startTransition(() => {
 			navigate(`/works/${work.annictId}`);
@@ -1494,15 +1523,11 @@ export function SyobocalCalendar() {
 						</p>
 						{accessToken ? (
 							<div className="mt-6 min-w-0 space-y-3">
-								{isWatchingWidgetLoading ? (
-									<div className="grid gap-2">
-										{[1, 2, 3, 4, 5, 6].map((skeleton) => (
-											<div
-												className="h-12 animate-pulse rounded-2xl bg-gray-800"
-												key={skeleton}
-											/>
-										))}
-									</div>
+								{shouldShowWatchingPlaceholder ? (
+									<WatchingWorksPlaceholder
+										inScheduleCount={watchingPlaceholderCounts.inSchedule}
+										outOfScheduleCount={watchingPlaceholderCounts.outOfSchedule}
+									/>
 								) : (
 									<>
 										{watchingError ? (

@@ -77,6 +77,7 @@ export type AnnictEpisode = {
 
 export type AnnictWork = {
 	annictId: number;
+	episodeCount: number;
 	episodes: AnnictEpisode[];
 	id: string;
 	imageUrl: string | null;
@@ -313,6 +314,7 @@ export const fetchWorkByAnnictId = async (
 			nodes: Array<
 				Nullable<{
 					annictId: number;
+					episodesCount: Nullable<number>;
 					episodes: Nullable<{
 						nodes: Array<
 							Nullable<{
@@ -353,6 +355,7 @@ export const fetchWorkByAnnictId = async (
 					title
 					titleKana
 					media
+					episodesCount
 					twitterUsername
 					twitterHashtag
 					officialSiteUrl
@@ -389,17 +392,20 @@ export const fetchWorkByAnnictId = async (
 		return null;
 	}
 
+	const episodes = compact(work.episodes?.nodes).map((episode) => ({
+		annictId: episode.annictId,
+		id: episode.id,
+		number: episode.number ?? null,
+		numberText: episode.numberText ?? null,
+		title: episode.title ?? null,
+		viewerDidTrack: episode.viewerDidTrack,
+		viewerRecordsCount: episode.viewerRecordsCount,
+	}));
+
 	return {
 		annictId: work.annictId,
-		episodes: compact(work.episodes?.nodes).map((episode) => ({
-			annictId: episode.annictId,
-			id: episode.id,
-			number: episode.number ?? null,
-			numberText: episode.numberText ?? null,
-			title: episode.title ?? null,
-			viewerDidTrack: episode.viewerDidTrack,
-			viewerRecordsCount: episode.viewerRecordsCount,
-		})),
+		episodeCount: work.episodesCount ?? episodes.length,
+		episodes,
 		id: work.id,
 		imageUrl: normalizeOptionalString(work.image?.recommendedImageUrl),
 		media: work.media ?? null,

@@ -191,7 +191,7 @@ export function WorkPage() {
 							{work.media ?? "media unknown"}
 						</span>
 						<span className="inline-flex items-center rounded-full border border-gray-700 bg-gray-800 px-3 py-1 text-xs text-gray-300">
-							全{work.episodes.length}話
+							全{work.episodeCount}話
 						</span>
 					</div>
 					<div className="flex flex-wrap gap-x-4 gap-y-2 mt-2">

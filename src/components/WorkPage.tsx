@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import useSWR from "swr";
+import useSWRInfinite from "swr/infinite";
 
 import {
 	type AnnictRatingState,
@@ -34,19 +34,87 @@ export function WorkPage() {
 	const [shareFacebook, setShareFacebook] = useState(false);
 	const [watchStatus, setWatchStatus] = useState<AnnictStatusState>("NO_STATE");
 
-	const workKey =
-		accessToken && Number.isInteger(parsedAnnictId) && parsedAnnictId > 0
-			? ["annict-work", accessToken, parsedAnnictId]
-			: null;
-
+	const episodeListRef = useRef<HTMLDivElement>(null);
+	const episodeSentinelRef = useRef<HTMLDivElement>(null);
 	const {
-		data: work,
+		data: workPages,
 		error: workErrorRaw,
 		isLoading,
+		isValidating,
+		size,
+		setSize,
 		mutate: mutateWork,
-	} = useSWR(workKey, ([, token, id]) =>
-		fetchWorkByAnnictId(token as string, id as number),
+	} = useSWRInfinite(
+		(
+			pageIndex,
+			previousPage: Awaited<ReturnType<typeof fetchWorkByAnnictId>>,
+		) => {
+			if (
+				!accessToken ||
+				!Number.isInteger(parsedAnnictId) ||
+				parsedAnnictId <= 0
+			)
+				return null;
+			if (
+				pageIndex > 0 &&
+				(!previousPage?.episodesPageInfo.hasNextPage ||
+					!previousPage.episodesPageInfo.endCursor)
+			)
+				return null;
+			return [
+				"annict-work-episodes-v1",
+				accessToken,
+				parsedAnnictId,
+				pageIndex === 0 ? null : previousPage?.episodesPageInfo.endCursor,
+			] as const;
+		},
+		([, token, id, after]) => fetchWorkByAnnictId(token, id, after),
+		{
+			persistSize: false,
+			revalidateFirstPage: false,
+			revalidateIfStale: false,
+			revalidateOnFocus: false,
+			revalidateOnReconnect: false,
+			shouldRetryOnError: false,
+		},
 	);
+	const firstPage = workPages?.[0];
+	const work = firstPage
+		? {
+				...firstPage,
+				episodes: workPages?.flatMap((page) => page?.episodes ?? []) ?? [],
+			}
+		: firstPage;
+	const lastPage = workPages?.at(-1);
+	const hasMoreEpisodes =
+		!!lastPage?.episodesPageInfo.hasNextPage &&
+		!!lastPage.episodesPageInfo.endCursor;
+	const isLoadingEpisodes =
+		isValidating || (size > (workPages?.length ?? 0) && !workErrorRaw);
+
+	useEffect(() => {
+		const sentinel = episodeSentinelRef.current;
+		const root = episodeListRef.current;
+		if (
+			!sentinel ||
+			!root ||
+			!hasMoreEpisodes ||
+			isLoadingEpisodes ||
+			workErrorRaw
+		)
+			return;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((entry) => entry.isIntersecting)) {
+					observer.disconnect();
+					void setSize((currentSize) => currentSize + 1);
+				}
+			},
+			{ root },
+		);
+		observer.observe(sentinel);
+		return () => observer.disconnect();
+	}, [hasMoreEpisodes, isLoadingEpisodes, workErrorRaw, setSize]);
 
 	const workError = workErrorRaw ? getErrorMessage(workErrorRaw) : null;
 
@@ -284,12 +352,11 @@ export function WorkPage() {
 									);
 									void mutateWork(
 										(currentData) =>
-											currentData
-												? {
-														...currentData,
-														viewerStatusState: nextStatus,
-													}
-												: currentData,
+											currentData?.map((page) =>
+												page
+													? { ...page, viewerStatusState: nextStatus }
+													: page,
+											),
 										{ revalidate: false },
 									);
 								} catch (error) {
@@ -320,6 +387,7 @@ export function WorkPage() {
 					style={{ minHeight: 420 }}
 				>
 					<div
+						ref={episodeListRef}
 						className="grid gap-2 overflow-auto pr-1"
 						style={{ maxHeight: 560 }}
 					>
@@ -341,6 +409,24 @@ export function WorkPage() {
 								<span>{episode.viewerRecordsCount}</span>
 							</button>
 						))}
+						<div ref={episodeSentinelRef} className="min-h-px" />
+						{isLoadingEpisodes ? (
+							<p role="status" className="text-sm text-gray-400">
+								エピソードを読み込み中です...
+							</p>
+						) : null}
+						{workError && work ? (
+							<div className="text-sm text-[#ffc29d]">
+								<p>{workError}</p>
+								<button
+									type="button"
+									className="mt-2 rounded-full border border-gray-700 px-3 py-2"
+									onClick={() => void mutateWork()}
+								>
+									再試行
+								</button>
+							</div>
+						) : null}
 					</div>
 				</article>
 				{selectedEpisode && (

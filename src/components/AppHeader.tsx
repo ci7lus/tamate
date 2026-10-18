@@ -8,7 +8,7 @@ import {
 import { Link, useNavigate } from "react-router-dom";
 import useSWR from "swr";
 
-import { searchWorksByTitle } from "../lib/annict";
+import { SEASON_LABELS, searchWorksByTitle } from "../lib/annict";
 import { getErrorMessage } from "../lib/errors";
 import { SEARCH_TERM_EVENT_NAME } from "../shared/search";
 import {
@@ -55,9 +55,7 @@ function GlobalSearch() {
 	);
 
 	const searchError = searchErrorRaw ? getErrorMessage(searchErrorRaw) : null;
-	const searchResults = [...(works ?? [])].sort(
-		(left, right) => left.annictId - right.annictId,
-	);
+	const searchResults = works ?? [];
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const searchRef = useRef<HTMLDivElement | null>(null);
 
@@ -268,7 +266,11 @@ function GlobalSearch() {
 								type="button"
 							>
 								<span className="font-medium text-gray-50">{work.title}</span>
-								<span className="text-sm text-gray-400">#{work.annictId}</span>
+								<span className="shrink-0 text-sm text-gray-400">
+									{work.seasonYear
+										? `${work.seasonYear}年${work.seasonName ? SEASON_LABELS[work.seasonName] : ""}`
+										: "放送時期未定"}
+								</span>
 							</button>
 						))}
 					</div>

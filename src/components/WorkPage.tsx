@@ -13,12 +13,14 @@ import {
 	updateAnnictWorkStatus,
 } from "../lib/annict";
 import { getErrorMessage } from "../lib/errors";
+import { readWorkMappings, removeWorkMapping } from "../lib/workMappings";
 import { recordVisitedWork } from "../shared/workHistory";
 import { useAnnictSession } from "./AnnictSessionProvider";
 
 export function WorkPage() {
 	const { annictId } = useParams();
 	const parsedAnnictId = Number(annictId);
+	const [workMappings, setWorkMappings] = useState(readWorkMappings);
 	const { accessToken, login } = useAnnictSession();
 	const recordedVisitId = useRef<number | null>(null);
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -92,9 +94,28 @@ export function WorkPage() {
 		setRating(null);
 	}, [selectedEpisodeId]);
 
+	const mappingControls = workMappings
+		.filter((entry) => entry.annictId === parsedAnnictId)
+		.map((entry) => (
+			<div
+				key={entry.titleId}
+				className="flex items-center justify-between gap-3 rounded-2xl border border-gray-800 bg-gray-900 p-4 text-sm text-gray-300"
+			>
+				<span>番組表「{entry.title}」の紐づけ先</span>
+				<button
+					type="button"
+					className="shrink-0 rounded-full border border-gray-700 px-3 py-2 hover:bg-gray-800"
+					onClick={() => setWorkMappings(removeWorkMapping(entry.titleId))}
+				>
+					紐づけ解除
+				</button>
+			</div>
+		));
+
 	if (!Number.isInteger(parsedAnnictId) || parsedAnnictId <= 0) {
 		return (
 			<div className="flex flex-col gap-3">
+				{mappingControls}
 				<section className="relative overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4">
 					<h1 className="m-0 text-4xl font-semibold leading-tight text-gray-50 max-[1279px]:max-w-none">
 						不正な作品IDです
@@ -108,6 +129,7 @@ export function WorkPage() {
 	if (!accessToken) {
 		return (
 			<div className="flex flex-col gap-3">
+				{mappingControls}
 				<section className="relative overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4">
 					<h1 className="m-0 text-4xl font-semibold leading-tight text-gray-50 max-[1279px]:max-w-none">
 						/works/{parsedAnnictId}
@@ -128,6 +150,7 @@ export function WorkPage() {
 	if (isLoading) {
 		return (
 			<div className="flex flex-col gap-3">
+				{mappingControls}
 				<section className="relative overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4">
 					<h1 className="m-0 text-4xl font-semibold leading-tight text-gray-50 max-[1279px]:max-w-none">
 						作品情報を読み込み中です...
@@ -140,6 +163,7 @@ export function WorkPage() {
 	if (!work) {
 		return (
 			<div className="flex flex-col gap-3">
+				{mappingControls}
 				<section className="relative overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4">
 					<h1 className="m-0 text-4xl font-semibold leading-tight text-gray-50 max-[1279px]:max-w-none">
 						作品を表示できませんでした
@@ -165,6 +189,7 @@ export function WorkPage() {
 
 	return (
 		<div className="flex flex-col gap-3">
+			{mappingControls}
 			<section className="group relative overflow-hidden rounded-3xl border border-gray-800 bg-gray-900 p-6 shadow-2xl max-[720px]:rounded-2xl max-[720px]:p-4 xl:flex xl:gap-6">
 				{work.imageUrl ? (
 					<div className="absolute inset-0 z-0">

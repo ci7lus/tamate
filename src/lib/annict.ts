@@ -52,17 +52,13 @@ export type AnnictSearchWork = {
 };
 
 export type AnnictWatchingWork = {
+	watchedEpisodeCount: number;
 	annictId: number;
 	episodeCount: number;
-	releasedOn: string | null;
 	seasonName: string | null;
 	syobocalTid: number | null;
 	title: string;
 	titleKana: string | null;
-};
-
-export type AnnictWatchingWorkProgress = {
-	watchedEpisodeCount: number;
 };
 
 export type AnnictEpisode = {
@@ -79,6 +75,7 @@ export type AnnictWork = {
 	annictId: number;
 	episodeCount: number;
 	episodes: AnnictEpisode[];
+	episodesPageInfo: AnnictPageInfo;
 	id: string;
 	imageUrl: string | null;
 	media: string | null;
@@ -102,7 +99,6 @@ type GraphQLResponse<TData> = {
 type Nullable<TValue> = TValue | null | undefined;
 
 const ANNICT_GRAPHQL_ENDPOINT = "https://api.annict.com/graphql";
-const ANNICT_REST_ENDPOINT = "https://api.annict.com";
 
 export class AnnictApiError extends Error {
 	readonly status?: number;
@@ -157,74 +153,6 @@ const requestAnnictGraphQL = async <TData>(
 	}
 
 	return payload.data;
-};
-
-const requestAnnictRest = async <TData>(
-	accessToken: string,
-	path: string,
-	params: URLSearchParams,
-) => {
-	const url = new URL(path, ANNICT_REST_ENDPOINT);
-	url.search = params.toString();
-
-	const response = await fetch(url, {
-		headers: {
-			Authorization: `Bearer ${accessToken}`,
-		},
-	});
-
-	if (!response.ok) {
-		let message = `Annict API request failed with status ${response.status}.`;
-
-		try {
-			const payload = (await response.json()) as {
-				errors?: Array<{
-					developer_message?: string;
-					message?: string;
-				}>;
-			};
-			const errorMessage = payload.errors
-				?.map((error) => error.developer_message ?? error.message)
-				.filter(Boolean)
-				.join("\n");
-			if (errorMessage) {
-				message = errorMessage;
-			}
-		} catch {
-			// Ignore JSON parse failures and fall back to the status-based message.
-		}
-
-		throw new AnnictApiError(message, response.status);
-	}
-
-	return (await response.json()) as TData;
-};
-
-const fetchSyobocalTidByAnnictId = async (
-	accessToken: string,
-	annictId: number,
-) => {
-	try {
-		const payload = await requestAnnictRest<{
-			works: Array<{ id: number; syobocal_tid: number | string | null }>;
-		}>(
-			accessToken,
-			"/v1/works",
-			new URLSearchParams([
-				["fields", "id,syobocal_tid"],
-				["filter_ids", String(annictId)],
-				["per_page", "1"],
-			]),
-		);
-		const value = payload.works.find(
-			(work) => work.id === annictId,
-		)?.syobocal_tid;
-		const tid = typeof value === "number" ? value : Number(value);
-
-		return Number.isSafeInteger(tid) && tid > 0 ? tid : null;
-	} catch {
-		return null;
-	}
 };
 
 export const buildAnnictAuthorizationUrl = () => {
@@ -323,15 +251,17 @@ export const searchWorksByTitle = async (accessToken: string, term: string) => {
 export const fetchWorkByAnnictId = async (
 	accessToken: string,
 	annictId: number,
+	after: string | null = null,
 ) => {
-	const syobocalTidPromise = fetchSyobocalTidByAnnictId(accessToken, annictId);
 	const data = await requestAnnictGraphQL<{
 		searchWorks: {
 			nodes: Array<
 				Nullable<{
 					annictId: number;
+					syobocalTid: Nullable<number>;
 					episodesCount: Nullable<number>;
 					episodes: Nullable<{
+						pageInfo: AnnictPageInfo;
 						nodes: Array<
 							Nullable<{
 								annictId: number;
@@ -363,10 +293,11 @@ export const fetchWorkByAnnictId = async (
 		};
 	}>(
 		accessToken,
-		`query Work($annictId: Int!) {
+		`query Work($annictId: Int!, $after: String) {
 			searchWorks(annictIds: [$annictId], first: 1) {
 				nodes {
 					annictId
+					syobocalTid
 					id
 					title
 					titleKana
@@ -386,7 +317,8 @@ export const fetchWorkByAnnictId = async (
 							name
 						}
 					}
-					episodes(orderBy: { field: SORT_NUMBER, direction: ASC }, first: 100) {
+					episodes(first: 100, after: $after, orderBy: { field: SORT_NUMBER, direction: ASC }) {
+						pageInfo { hasNextPage endCursor }
 						nodes {
 							annictId
 							id
@@ -400,7 +332,7 @@ export const fetchWorkByAnnictId = async (
 				}
 			}
 		}`,
-		{ annictId },
+		{ annictId, after },
 	);
 
 	const work = compact(data.searchWorks.nodes)[0];
@@ -422,11 +354,15 @@ export const fetchWorkByAnnictId = async (
 		annictId: work.annictId,
 		episodeCount: work.episodesCount ?? episodes.length,
 		episodes,
+		episodesPageInfo: work.episodes?.pageInfo ?? {
+			hasNextPage: false,
+			endCursor: null,
+		},
 		id: work.id,
 		imageUrl: normalizeOptionalString(work.image?.recommendedImageUrl),
 		media: work.media ?? null,
 		officialSiteUrl: work.officialSiteUrl ?? null,
-		syobocalTid: await syobocalTidPromise,
+		syobocalTid: work.syobocalTid ?? null,
 		seasonName: work.seasonName ?? null,
 		seasonYear: work.seasonYear ?? null,
 		seriesList: compact(work.seriesList?.nodes)
@@ -440,125 +376,94 @@ export const fetchWorkByAnnictId = async (
 	} satisfies AnnictWork;
 };
 
-export const fetchWatchingWorks = async (accessToken: string) => {
-	const works: AnnictWatchingWork[] = [];
-	let nextPage: number | null = 1;
-
-	while (nextPage) {
-		const params = new URLSearchParams([
-			[
-				"fields",
-				"id,title,title_kana,released_on,season_name,syobocal_tid,episodes_count",
-			],
-			["filter_status", "watching"],
-			["page", String(nextPage)],
-			["per_page", "50"],
-		]);
-		const payload: {
-			next_page: number | null;
-			works: Array<{
-				episodes_count: number | null;
-				id: number;
-				released_on: string | null;
-				season_name: string | null;
-				syobocal_tid: number | string | null;
-				title: string;
-				title_kana: string | null;
-			}>;
-		} = await requestAnnictRest(accessToken, "/v1/me/works", params);
-
-		works.push(
-			...payload.works.map(
-				(work: {
-					episodes_count: number | null;
-					id: number;
-					released_on: string | null;
-					season_name: string | null;
-					syobocal_tid: number | string | null;
-					title: string;
-					title_kana: string | null;
-				}) => ({
-					annictId: work.id,
-					episodeCount: work.episodes_count ?? 0,
-					releasedOn: normalizeOptionalString(work.released_on),
-					seasonName: normalizeOptionalString(work.season_name),
-					syobocalTid:
-						typeof work.syobocal_tid === "number"
-							? work.syobocal_tid
-							: work.syobocal_tid
-								? Number.parseInt(work.syobocal_tid, 10)
-								: null,
-					title: work.title,
-					titleKana: work.title_kana,
-				}),
-			),
-		);
-
-		nextPage = payload.next_page;
-	}
-
-	return works;
+type AnnictPageInfo = {
+	hasNextPage: boolean;
+	endCursor: string | null;
 };
 
-export const fetchWatchingWorkProgress = async (
+type AnnictWatchingEpisodes = {
+	nodes: Array<Nullable<{ viewerDidTrack: boolean }>>;
+};
+
+type AnnictWatchingWorkNode = {
+	annictId: number;
+	episodesCount: number;
+	seasonName: Nullable<AnnictSeasonName>;
+	seasonYear: Nullable<number>;
+	syobocalTid: Nullable<number>;
+	title: string;
+	titleKana: Nullable<string>;
+	episodes: AnnictWatchingEpisodes;
+};
+
+type AnnictWatchingWorksResponse = {
+	viewer: Nullable<{
+		works: {
+			nodes: Array<Nullable<AnnictWatchingWorkNode>>;
+			pageInfo: AnnictPageInfo;
+		};
+	}>;
+};
+
+export const fetchWatchingWorks = async (
 	accessToken: string,
-	annictIds: number[],
-) => {
-	const progressByAnnictId: Record<number, AnnictWatchingWorkProgress> = {};
-	const uniqueAnnictIds = [...new Set(annictIds)];
-	const chunks: number[][] = [];
+): Promise<AnnictWatchingWork[]> => {
+	const works: AnnictWatchingWork[] = [];
+	let after: string | null = null;
 
-	for (let index = 0; index < uniqueAnnictIds.length; index += 50) {
-		chunks.push(uniqueAnnictIds.slice(index, index + 50));
-	}
-
-	await Promise.all(
-		chunks.map(async (chunk) => {
-			const data = await requestAnnictGraphQL<{
-				searchWorks: {
-					nodes: Array<
-						Nullable<{
-							annictId: number;
-							episodes: Nullable<{
-								nodes: Array<
-									Nullable<{
-										viewerDidTrack: boolean;
-									}>
-								>;
-							}>;
-						}>
-					>;
-				};
-			}>(
+	do {
+		const data: AnnictWatchingWorksResponse =
+			await requestAnnictGraphQL<AnnictWatchingWorksResponse>(
 				accessToken,
-				`query WatchingWorkProgress($annictIds: [Int!]!) {
-					searchWorks(annictIds: $annictIds, first: 50) {
-						nodes {
-							annictId
-							episodes(first: 100) {
-								nodes {
-									viewerDidTrack
-								}
-							}
+				`query WatchingWorks($after: String) {
+			viewer {
+				works(state: WATCHING, first: 50, after: $after) {
+					nodes {
+						annictId
+						title
+						titleKana
+						episodesCount
+						seasonName
+						seasonYear
+						syobocalTid
+						episodes {
+							nodes { viewerDidTrack }
 						}
 					}
-				}`,
-				{ annictIds: chunk },
+					pageInfo { hasNextPage endCursor }
+				}
+			}
+		}`,
+				{ after },
 			);
+		if (!data.viewer) {
+			throw new AnnictApiError("Annictのユーザー情報を取得できませんでした。");
+		}
 
-			for (const work of compact(data.searchWorks.nodes)) {
-				const watchedEpisodeCount = compact(work.episodes?.nodes).filter(
+		const page = data.viewer.works;
+		works.push(
+			...compact(page.nodes).map((work) => {
+				const watchedEpisodeCount = compact(work.episodes.nodes).filter(
 					(episode) => episode.viewerDidTrack,
 				).length;
-
-				progressByAnnictId[work.annictId] = {
+				return {
+					annictId: work.annictId,
+					episodeCount: work.episodesCount,
+					seasonName:
+						work.seasonYear && work.seasonName
+							? `${work.seasonYear}-${work.seasonName.toLowerCase()}`
+							: null,
+					syobocalTid: work.syobocalTid ?? null,
+					title: work.title,
+					titleKana: normalizeOptionalString(work.titleKana),
 					watchedEpisodeCount,
 				};
-			}
-		}),
-	);
+			}),
+		);
+		after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+	} while (after);
 
-	return progressByAnnictId;
+	return works;
 };
 
 export const updateAnnictWorkStatus = async (

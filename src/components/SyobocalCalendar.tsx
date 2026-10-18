@@ -4,11 +4,7 @@ import { startTransition, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import useSWR from "swr";
 
-import {
-	type AnnictWatchingWork,
-	fetchWatchingWorkProgress,
-	fetchWatchingWorks,
-} from "../lib/annict";
+import { type AnnictWatchingWork, fetchWatchingWorks } from "../lib/annict";
 import { serializeCalendarPlaceholderShape } from "../lib/calendarPlaceholder";
 import { getErrorMessage } from "../lib/errors";
 import { writeStorage } from "../lib/storage";
@@ -41,13 +37,6 @@ const SEASON_START_MONTH: Record<string, number> = {
 };
 
 const getBroadcastDate = (work: AnnictWatchingWork) => {
-	if (work.releasedOn) {
-		const releasedOn = Date.parse(work.releasedOn);
-		if (Number.isFinite(releasedOn)) {
-			return releasedOn;
-		}
-	}
-
 	const season = work.seasonName?.match(
 		/^(\d{4})-(winter|spring|summer|autumn)$/i,
 	);
@@ -799,7 +788,7 @@ export function SyobocalCalendar() {
 		error: watchingErrorRaw,
 		isLoading: isWatchingLoading,
 	} = useSWR(
-		accessToken ? ["annict-watching-v2", accessToken] : null,
+		accessToken ? ["annict-watching-v3", accessToken] : null,
 		([, token]) => fetchWatchingWorks(token),
 		{
 			revalidateOnMount: true,
@@ -812,28 +801,6 @@ export function SyobocalCalendar() {
 	const watchingError = watchingErrorRaw
 		? getErrorMessage(watchingErrorRaw)
 		: null;
-	const watchingWorkIds = watchingWorks.map((work) => work.annictId);
-	const watchingWorkIdsKey = watchingWorkIds.join(",");
-	const {
-		data: watchingProgress,
-		isLoading: isWatchingProgressLoading,
-		error: watchingProgressErrorRaw,
-	} = useSWR(
-		accessToken && watchingWorksRaw && watchingWorkIdsKey
-			? ["annict-watching-progress", accessToken, watchingWorkIdsKey]
-			: null,
-		([, token, ids]) =>
-			fetchWatchingWorkProgress(
-				token,
-				ids.split(",").map((id) => Number.parseInt(id, 10)),
-			),
-		{
-			revalidateOnMount: true,
-			revalidateIfStale: false,
-			revalidateOnFocus: false,
-			revalidateOnReconnect: false,
-		},
-	);
 	const [activeProgramModal, setActiveProgramModal] =
 		useState<ProgramActionModalState | null>(null);
 	const [nowTick, setNowTick] = useState(() => Date.now());
@@ -1067,10 +1034,7 @@ export function SyobocalCalendar() {
 	}, [watchingPlaceholderCountsToStore]);
 	const shouldShowWatchingPlaceholder =
 		watchingWorksRaw === undefined &&
-		(isWatchingLoading ||
-			isLoading ||
-			isScheduleLoading ||
-			isWatchingProgressLoading);
+		(isWatchingLoading || isLoading || isScheduleLoading);
 	const openWatchingWork = (work: AnnictWatchingWork) => {
 		startTransition(() => {
 			navigate(`/works/${work.annictId}`);
@@ -1494,11 +1458,6 @@ export function SyobocalCalendar() {
 										{watchingError ? (
 											<p className="text-sm text-[#ffc29d]">{watchingError}</p>
 										) : null}
-										{watchingProgressErrorRaw ? (
-											<p className="text-sm text-[#ffc29d]">
-												進捗情報の一部を取得できませんでした。
-											</p>
-										) : null}
 										<div className="min-w-0 space-y-5">
 											<section>
 												<div className="mb-2 flex items-center justify-between">
@@ -1520,8 +1479,6 @@ export function SyobocalCalendar() {
 															if (!work) {
 																return null;
 															}
-															const progress =
-																watchingProgress?.[work.annictId];
 															const title = item.shortTitle ?? item.title;
 															const episodeNumber =
 																item.count === null ? null : `${item.count}話`;
@@ -1538,9 +1495,7 @@ export function SyobocalCalendar() {
 																	programChannel={item.channelName}
 																	programTime={formatClock(item.startAt)}
 																	title={displayTitle}
-																	watchedEpisodeCount={
-																		progress?.watchedEpisodeCount ?? 0
-																	}
+																	watchedEpisodeCount={work.watchedEpisodeCount}
 																/>
 															);
 														})}
@@ -1563,18 +1518,13 @@ export function SyobocalCalendar() {
 												{otherWatchingWorks.length > 0 ? (
 													<div className="grid min-w-0 gap-2">
 														{otherWatchingWorks.map((work) => {
-															const progress =
-																watchingProgress?.[work.annictId];
-
 															return (
 																<WatchingWorkRow
 																	episodeCount={work.episodeCount}
 																	key={work.annictId}
 																	onOpen={() => openWatchingWork(work)}
 																	title={work.title}
-																	watchedEpisodeCount={
-																		progress?.watchedEpisodeCount ?? 0
-																	}
+																	watchedEpisodeCount={work.watchedEpisodeCount}
 																/>
 															);
 														})}

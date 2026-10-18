@@ -7,5 +7,6 @@ export const STORAGE_KEYS = {
 		"tamate.annict.watchingWorksPlaceholderCounts.v1",
 	lastVisitedPath: "tamate.navigation.lastVisitedPath",
 	pendingAuthPath: "tamate.navigation.pendingAuthPath",
+	workMappings: "tamate.syobocal.workMappings.v1",
 	workHistory: "tamate.navigation.workHistory",
 } as const;

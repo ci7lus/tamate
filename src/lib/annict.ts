@@ -278,16 +278,20 @@ export const searchWorksByTitle = async (accessToken: string, term: string) => {
 					annictId: number;
 					image: Nullable<{ recommendedImageUrl: Nullable<string> }>;
 					title: string;
+					seasonYear: Nullable<number>;
+					seasonName: Nullable<AnnictSeasonName>;
 				}>
 			>;
 		};
 	}>(
 		accessToken,
 		`query SearchWorks($term: String!) {
-			searchWorks(titles: [$term], first: 12) {
+			searchWorks(titles: [$term], first: 100, orderBy: { field: SEASON, direction: DESC }) {
 				nodes {
 					annictId
 					title
+					seasonYear
+					seasonName
 					image {
 						recommendedImageUrl
 					}
@@ -297,11 +301,23 @@ export const searchWorksByTitle = async (accessToken: string, term: string) => {
 		{ term },
 	);
 
-	return compact(data.searchWorks.nodes).map((work) => ({
-		annictId: work.annictId,
-		imageUrl: normalizeOptionalString(work.image?.recommendedImageUrl),
-		title: work.title,
-	}));
+	return compact(data.searchWorks.nodes)
+		.map((work) => ({
+			annictId: work.annictId,
+			imageUrl: normalizeOptionalString(work.image?.recommendedImageUrl),
+			title: work.title,
+			seasonYear: work.seasonYear ?? null,
+			seasonName: work.seasonName ?? null,
+		}))
+		.sort((left, right) => {
+			const seasons = { WINTER: 1, SPRING: 2, SUMMER: 3, AUTUMN: 4 };
+			return (
+				(right.seasonYear ?? 0) - (left.seasonYear ?? 0) ||
+				(right.seasonName ? seasons[right.seasonName] : 0) -
+					(left.seasonName ? seasons[left.seasonName] : 0) ||
+				left.annictId - right.annictId
+			);
+		});
 };
 
 export const fetchWorkByAnnictId = async (

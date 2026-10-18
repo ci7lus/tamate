@@ -2,13 +2,12 @@ import { Interweave } from "interweave";
 import { Url, UrlMatcher } from "interweave-autolink";
 import { startTransition, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import useSWR, { mutate as swrMutate } from "swr";
+import useSWR from "swr";
 
 import {
 	type AnnictWatchingWork,
 	fetchWatchingWorkProgress,
 	fetchWatchingWorks,
-	searchWorksByTitle,
 } from "../lib/annict";
 import { serializeCalendarPlaceholderShape } from "../lib/calendarPlaceholder";
 import { getErrorMessage } from "../lib/errors";
@@ -24,11 +23,12 @@ import {
 	readWatchingWorksPlaceholderCounts,
 	serializeWatchingWorksPlaceholderCounts,
 } from "../lib/watchingWorksPlaceholder";
+import { readWorkMappings } from "../lib/workMappings";
 import { CALENDAR_TIME_RAIL_WIDTH, STORAGE_KEYS } from "../shared/constants";
-import { requestSearchTerm } from "../shared/search";
 import { useAnnictSession } from "./AnnictSessionProvider";
 import { CalendarPlaceholder } from "./CalendarPlaceholder";
 import { WatchingWorksPlaceholder } from "./WatchingWorksPlaceholder";
+import { WorkMappingModal } from "./WorkMappingModal";
 
 const HOUR_HEIGHT = 144;
 const MIN_EMPTY_HOUR_HEIGHT = HOUR_HEIGHT * 0.25;
@@ -155,12 +155,6 @@ type StoredFilters = {
 	channelGroups: string[];
 	mayRebroadcastHidden: boolean;
 };
-
-const normalizeAnnictTitle = (value: string) =>
-	value
-		.normalize("NFKC")
-		.toLowerCase()
-		.replace(/[\p{P}\p{S}\sー－〜]/gu, "");
 
 const buildDefaultFilters = (): StoredFilters => ({
 	categories: DEFAULT_SELECTED_CATEGORIES,
@@ -607,7 +601,7 @@ function ProgramActionModal({
 	isLoggedIn: boolean;
 	item: SyobocalScheduleItem;
 	onClose: () => void;
-	onOpenSearch: (term: string) => Promise<void> | void;
+	onOpenSearch: (item: SyobocalScheduleItem) => void;
 }) {
 	const [entered, setEntered] = useState(false);
 
@@ -675,12 +669,12 @@ function ProgramActionModal({
 								if (!isLoggedIn) {
 									return;
 								}
-								void onOpenSearch(item.shortTitle ?? item.title);
+								onOpenSearch(item);
 								onClose();
 							}}
 							type="button"
 						>
-							検索
+							作品を選択
 						</button>
 					)}
 					<a
@@ -1083,52 +1077,19 @@ export function SyobocalCalendar() {
 		});
 	};
 
-	const openSearch = async (term: string) => {
-		const originalTerm = term.trim();
-		const trimmedTerm = originalTerm.replace(/\s*\(\d+\)$/, "").trim();
-		const removedNumericSuffix = trimmedTerm !== originalTerm;
-		if (!trimmedTerm) {
+	const [mappingItem, setMappingItem] = useState<SyobocalScheduleItem | null>(
+		null,
+	);
+	const savedMappings = readWorkMappings();
+	const openSearch = (item: SyobocalScheduleItem) => {
+		const mapping = readWorkMappings().find(
+			(entry) => entry.titleId === item.titleId,
+		);
+		if (mapping) {
+			startTransition(() => navigate(`/works/${mapping.annictId}`));
 			return;
 		}
-		if (removedNumericSuffix) {
-			requestSearchTerm(trimmedTerm);
-			return;
-		}
-
-		if (accessToken) {
-			const searchKey = ["annict-search", accessToken, trimmedTerm];
-			try {
-				const works = await swrMutate(
-					searchKey,
-					searchWorksByTitle(accessToken, trimmedTerm),
-					{ revalidate: false },
-				);
-				if (!works) {
-					return;
-				}
-
-				const normalizedTerm = normalizeAnnictTitle(trimmedTerm);
-				const matchedWork =
-					works.find(
-						(work) => normalizeAnnictTitle(work.title) === normalizedTerm,
-					) ?? works[0];
-
-				if (matchedWork) {
-					requestSearchTerm(trimmedTerm, {
-						focus: false,
-						openMenu: false,
-					});
-					startTransition(() => {
-						navigate(`/works/${matchedWork.annictId}`);
-					});
-					return;
-				}
-			} catch {
-				// Fall back to the global search box if Annict lookup fails.
-			}
-		}
-
-		requestSearchTerm(trimmedTerm);
+		setMappingItem(item);
 	};
 
 	const toggleCategory = (value: number) => {
@@ -1649,9 +1610,20 @@ export function SyobocalCalendar() {
 				</div>
 			</aside>
 
+			{mappingItem ? (
+				<WorkMappingModal
+					titleId={mappingItem.titleId}
+					title={mappingItem.shortTitle ?? mappingItem.title}
+					onClose={() => setMappingItem(null)}
+				/>
+			) : null}
 			{activeProgramModal ? (
 				<ProgramActionModal
-					annictId={activeProgramModal.annictId}
+					annictId={
+						savedMappings.find(
+							(entry) => entry.titleId === activeProgramModal.item.titleId,
+						)?.annictId ?? activeProgramModal.annictId
+					}
 					isLoggedIn={!!accessToken}
 					item={activeProgramModal.item}
 					onClose={() => setActiveProgramModal(null)}

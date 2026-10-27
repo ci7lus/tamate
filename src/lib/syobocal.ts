@@ -36,6 +36,7 @@ export type SyobocalScheduleItem = {
 
 export type SyobocalSchedule = {
 	businessDate: string;
+	selectedGroups: string[];
 	channelGroups: SyobocalChannelGroup[];
 	channels: SyobocalChannel[];
 	items: SyobocalScheduleItem[];
@@ -254,14 +255,63 @@ const parseXml = (xmlText: string) => {
 	return xml;
 };
 
-const fetchSyobocalJson = async (businessDate: string) => {
+const fetchSyobocalJson = async (
+	businessDate: string,
+	channelIds: number[],
+) => {
 	const params = new URLSearchParams({
 		Req: "ProgramByDate,TitleMedium",
 		start: businessDate,
+		ChID: channelIds.join(","),
 	});
 	const response = await fetch(
 		`${SYOBOCAL_JSON_ENDPOINT}?${params.toString()}`,
 	);
+	if (response.status === 400) {
+		params.set("Req", "ProgramByDate");
+		const programResponse = await fetch(
+			`${SYOBOCAL_JSON_ENDPOINT}?${params.toString()}`,
+		);
+		if (!programResponse.ok) {
+			throw new Error(
+				`しょぼいカレンダーへの問い合わせに失敗しました (${programResponse.status})。`,
+			);
+		}
+		const programs = (await programResponse.json()) as unknown;
+		if (!isSyobocalResponse(programs)) {
+			throw new Error("しょぼいカレンダーのレスポンスを解析できませんでした。");
+		}
+		const titleIds = [
+			...new Set(
+				Object.values(programs.Programs ?? {})
+					.map((program) => parseNumber(program.TID))
+					.filter((id): id is number => id !== null),
+			),
+		];
+		const titles: Record<string, SyobocalTitleResponse> = {};
+		for (let index = 0; index < titleIds.length; index += 100) {
+			const titleParams = new URLSearchParams({
+				Req: "TitleMedium",
+				TID: titleIds.slice(index, index + 100).join(","),
+			});
+			const titleResponse = await fetch(
+				`${SYOBOCAL_JSON_ENDPOINT}?${titleParams.toString()}`,
+			);
+			if (!titleResponse.ok) {
+				throw new Error(
+					`しょぼいカレンダーへの問い合わせに失敗しました (${titleResponse.status})。`,
+				);
+			}
+			const result = (await titleResponse.json()) as unknown;
+			if (!isSyobocalResponse(result)) {
+				throw new Error(
+					"しょぼいカレンダーのレスポンスを解析できませんでした。",
+				);
+			}
+			Object.assign(titles, result.Titles);
+		}
+		return { Programs: programs.Programs, Titles: titles };
+	}
 	if (!response.ok) {
 		throw new Error(
 			`しょぼいカレンダーへの問い合わせに失敗しました (${response.status})。`,
@@ -473,8 +523,10 @@ export const parseSyobocalDateTime = (value: string) =>
 
 export const fetchSyobocalSchedule = async (
 	businessDate: string,
+	selectedGroups: string[],
 ): Promise<SyobocalSchedule> => {
-	const pendingRequest = pendingScheduleRequests.get(businessDate);
+	const requestKey = JSON.stringify([businessDate, [...selectedGroups].sort()]);
+	const pendingRequest = pendingScheduleRequests.get(requestKey);
 	if (pendingRequest) {
 		return pendingRequest;
 	}
@@ -483,10 +535,15 @@ export const fetchSyobocalSchedule = async (
 		const { rangeEndAt, rangeStartAt } = buildBusinessRange(businessDate);
 		const rangeStart = parseSyobocalDateTime(rangeStartAt);
 		const rangeEnd = parseSyobocalDateTime(rangeEndAt);
-		const [response, channelDirectory] = await Promise.all([
-			fetchSyobocalJson(businessDate),
-			fetchChannelDirectory(),
-		]);
+		const channelDirectory = await fetchChannelDirectory();
+		const selectedGroupSet = new Set(selectedGroups);
+		const channelIds = channelDirectory.channelGroups
+			.filter((group) => selectedGroupSet.has(group.label))
+			.flatMap((group) => group.channelIds);
+		const response =
+			channelIds.length > 0
+				? await fetchSyobocalJson(businessDate, [...new Set(channelIds)])
+				: {};
 		const titleMap = buildTitleMap(response.Titles);
 
 		const items = Object.values(response.Programs ?? {})
@@ -582,14 +639,10 @@ export const fetchSyobocalSchedule = async (
 				rawGroupId: value.rawGroupId,
 			}));
 
-		const currentChannelIds = new Set(channels.map((channel) => channel.id));
-		const channelGroups = channelDirectory.channelGroups.filter((group) =>
-			group.channelIds.some((channelId) => currentChannelIds.has(channelId)),
-		);
-
 		return {
 			businessDate,
-			channelGroups,
+			selectedGroups: [...selectedGroups].sort(),
+			channelGroups: channelDirectory.channelGroups,
 			channels,
 			items,
 			rangeEndAt,
@@ -597,11 +650,11 @@ export const fetchSyobocalSchedule = async (
 		};
 	})();
 
-	pendingScheduleRequests.set(businessDate, request);
+	pendingScheduleRequests.set(requestKey, request);
 
 	try {
 		return await request;
 	} finally {
-		pendingScheduleRequests.delete(businessDate);
+		pendingScheduleRequests.delete(requestKey);
 	}
 };

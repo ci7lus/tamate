@@ -17,6 +17,15 @@ export function AppShell() {
 					<Route element={<Navigate replace to="/" />} path="*" />
 				</Routes>
 			</main>
+			<footer className="mt-auto pt-6 text-center text-sm text-gray-400">
+				<a
+					className="text-gray-300 underline decoration-gray-600 underline-offset-4 hover:text-[#FF8B46]"
+					href="https://github.com/ci7lus/tamate"
+				>
+					tamate
+				</a>{" "}
+				made with ❤️
+			</footer>
 		</div>
 	);
 }

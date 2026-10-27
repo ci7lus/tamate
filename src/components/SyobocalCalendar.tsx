@@ -151,10 +151,6 @@ const buildDefaultFilters = (): StoredFilters => ({
 	mayRebroadcastHidden: true,
 });
 
-const hasSameOrderedValues = <TValue,>(left: TValue[], right: TValue[]) =>
-	left.length === right.length &&
-	left.every((value, index) => value === right[index]);
-
 const readStoredFilters = () => {
 	if (typeof window === "undefined") {
 		return buildDefaultFilters();
@@ -772,13 +768,26 @@ export function SyobocalCalendar() {
 		storedFilters.mayRebroadcastHidden,
 	);
 	const {
-		data: schedule,
+		data: scheduleData,
 		error: scheduleErrorRaw,
 		isLoading: isScheduleLoading,
 		mutate: mutateSchedule,
-	} = useSWR(["syobocal-schedule", displayDate], ([, date]) =>
-		fetchSyobocalSchedule(date),
+	} = useSWR(
+		["syobocal-schedule", displayDate, [...selectedChannelGroups].sort()],
+		([, date, groups]) => fetchSyobocalSchedule(date, groups),
+		{
+			keepPreviousData: true,
+			revalidateIfStale: false,
+			revalidateOnFocus: false,
+			revalidateOnReconnect: false,
+		},
 	);
+	const schedule =
+		scheduleData?.businessDate === displayDate &&
+		JSON.stringify(scheduleData.selectedGroups) ===
+			JSON.stringify([...selectedChannelGroups].sort())
+			? scheduleData
+			: undefined;
 	const scheduleError = scheduleErrorRaw
 		? getErrorMessage(scheduleErrorRaw)
 		: null;
@@ -811,7 +820,7 @@ export function SyobocalCalendar() {
 			watchingWorksByTid.set(work.syobocalTid, work);
 		}
 	}
-	const availableChannelGroups = schedule?.channelGroups ?? [];
+	const availableChannelGroups = scheduleData?.channelGroups ?? [];
 	const selectedCategorySet = new Set(selectedCategories);
 	const selectedChannelGroupSet = new Set(selectedChannelGroups);
 	const categoryCounts = new Map<number, number>();
@@ -828,37 +837,6 @@ export function SyobocalCalendar() {
 			);
 		}
 	}
-
-	useEffect(() => {
-		if (!schedule || availableChannelGroups.length === 0) {
-			return;
-		}
-
-		setSelectedChannelGroups((current) => {
-			const availableLabels = new Set(
-				availableChannelGroups.map((group) => group.label),
-			);
-			const normalizedCurrent = current.filter((label) =>
-				availableLabels.has(label),
-			);
-
-			if (normalizedCurrent.length > 0) {
-				return hasSameOrderedValues(normalizedCurrent, current)
-					? current
-					: normalizedCurrent;
-			}
-
-			const defaultLabels = DEFAULT_VISIBLE_CHANNEL_GROUPS.filter((label) =>
-				availableLabels.has(label),
-			);
-			const nextLabels =
-				defaultLabels.length > 0
-					? [...defaultLabels]
-					: availableChannelGroups.map((group) => group.label);
-
-			return hasSameOrderedValues(nextLabels, current) ? current : nextLabels;
-		});
-	}, [availableChannelGroups, schedule]);
 
 	useEffect(() => {
 		if (typeof window === "undefined") {
@@ -1269,15 +1247,17 @@ export function SyobocalCalendar() {
 														type="checkbox"
 													/>
 													<span>{group.label}</span>
-													<span
-														className={
-															isSelected
-																? "rounded-full bg-sky-400 px-2 py-0.5 text-xs text-gray-950"
-																: "rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-300"
-														}
-													>
-														{channelGroupCounts.get(group.label) ?? 0}
-													</span>
+													{isSelected ? (
+														<span
+															className={
+																isSelected
+																	? "rounded-full bg-sky-400 px-2 py-0.5 text-xs text-gray-950"
+																	: "rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-300"
+															}
+														>
+															{channelGroupCounts.get(group.label) ?? 0}
+														</span>
+													) : null}
 												</label>
 											);
 										})}

@@ -749,7 +749,8 @@ export function SyobocalCalendar() {
 	const [watchingPlaceholderCounts] = useState(
 		readWatchingWorksPlaceholderCounts,
 	);
-	const todayDate = getInitialSyobocalDate();
+	const [nowTick, setNowTick] = useState(() => Date.now());
+	const todayDate = getInitialSyobocalDate(new Date(nowTick));
 	const [displayDate, setDisplayDate] = useState(() => {
 		const hashValue = location.hash.replace(/^#/, "").trim();
 		if (/^\d{4}-\d{2}-\d{2}$/.test(hashValue)) {
@@ -812,7 +813,6 @@ export function SyobocalCalendar() {
 		: null;
 	const [activeProgramModal, setActiveProgramModal] =
 		useState<ProgramActionModalState | null>(null);
-	const [nowTick, setNowTick] = useState(() => Date.now());
 
 	const watchingWorksByTid = new Map<number, AnnictWatchingWork>();
 	for (const work of watchingWorks) {
@@ -903,19 +903,14 @@ export function SyobocalCalendar() {
 	}, [calendarShapeStorageValue]);
 
 	useEffect(() => {
-		const today = getInitialSyobocalDate();
-		const targetHash = displayDate === today ? "" : `#${displayDate}`;
+		const targetHash = displayDate === todayDate ? "" : `#${displayDate}`;
 		if (location.hash === targetHash) {
 			return;
 		}
 		navigate({ hash: targetHash }, { replace: true });
-	}, [displayDate, location.hash, navigate]);
+	}, [displayDate, location.hash, navigate, todayDate]);
 
 	useEffect(() => {
-		if (!isCurrentDisplayDate) {
-			return;
-		}
-
 		setNowTick(Date.now());
 		const timerId = window.setInterval(() => {
 			setNowTick(Date.now());
@@ -924,7 +919,7 @@ export function SyobocalCalendar() {
 		return () => {
 			window.clearInterval(timerId);
 		};
-	}, [isCurrentDisplayDate]);
+	}, []);
 
 	useEffect(() => {
 		if (!activeProgramModal) {
@@ -1142,7 +1137,11 @@ export function SyobocalCalendar() {
 							</button>
 							<button
 								className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#FF8B46] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#f07732]"
-								onClick={() => setDisplayDate(getInitialSyobocalDate())}
+								onClick={() => {
+									const now = new Date();
+									setNowTick(now.getTime());
+									setDisplayDate(getInitialSyobocalDate(now));
+								}}
 								type="button"
 							>
 								今日
